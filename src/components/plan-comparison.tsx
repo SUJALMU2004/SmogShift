@@ -21,11 +21,17 @@ const decisionLabel: Record<Decision["kind"], string> = {
 
 type Props = {
   plan: ReturnType<typeof buildPlan> | null;
-  sample: boolean;
-  forecastAvailable: boolean;
+  forecastStatus: "sample" | "loading" | "ready" | "unavailable";
 };
 
-export function PlanComparison({ plan, sample, forecastAvailable }: Props) {
+const forecastDescriptions: Record<Props["forecastStatus"], string> = {
+  sample: "Suggestions for the fictional forecast.",
+  loading: "Loading tomorrow’s regional forecast.",
+  ready: "Suggestions for tomorrow’s regional forecast.",
+  unavailable: "Forecast unavailable. Indoor and trip suggestions still apply.",
+};
+
+export function PlanComparison({ plan, forecastStatus }: Props) {
   const { outdoorMinutesAvoided, conditionalRoundTrips, sourcesRemoved } =
     plan?.impact ?? {};
   return (
@@ -36,19 +42,13 @@ export function PlanComparison({ plan, sample, forecastAvailable }: Props) {
         </span>
         <div>
           <h2 id="comparison-heading">Plan comparison</h2>
-          <p>
-            {sample
-              ? "Suggestions for the fictional forecast."
-              : forecastAvailable
-                ? "Suggestions for tomorrow’s regional forecast."
-                : "Forecast unavailable. Indoor and trip suggestions still apply."}
-          </p>
+          <p>{forecastDescriptions[forecastStatus]}</p>
         </div>
       </div>
       <p className="sr-only" aria-live="polite" aria-atomic="true">
         {plan
           ? `Plan updated. ${outdoorMinutesAvoided} fewer planned outdoor minutes, ${conditionalRoundTrips} conditional car round trips avoided, ${sourcesRemoved} indoor smoke or dust sources addressed.`
-          : "Confirm your routine to see a plan."}
+          : ""}
       </p>
       {plan ? (
         <>
@@ -127,10 +127,14 @@ export function PlanComparison({ plan, sample, forecastAvailable }: Props) {
       ) : (
         <div className="empty-plan">
           <CalendarCheck size={28} aria-hidden />
-          <p>
-            Choose <strong>Compare plans</strong> after reviewing your
-            activities.
-          </p>
+          {forecastStatus === "loading" ? (
+            <p>The comparison will update when the forecast arrives.</p>
+          ) : (
+            <p>
+              Choose <strong>Compare plans</strong> after reviewing your
+              activities.
+            </p>
+          )}
         </div>
       )}
     </section>

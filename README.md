@@ -4,7 +4,7 @@ SmogShift is an account-free **Challenge 6 · Urban Air Quality Assistant** for 
 
 ## Try it
 
-Requires Node.js 22 or newer and npm.
+Use Node.js 24 LTS with npm. The tooling also supports Node.js 22.12+ within the 22.x release line.
 
 ```sh
 npm ci

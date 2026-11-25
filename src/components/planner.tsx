@@ -41,6 +41,13 @@ export function Planner() {
   const sequence = useRef(0);
   const regional = useRegionalForecast(city, !sample, revision);
   const forecast = sample ? sampleForecast(city) : regional.forecast;
+  const forecastStatus = sample
+    ? "sample"
+    : regional.loading
+      ? "loading"
+      : forecast
+        ? "ready"
+        : "unavailable";
   const plan =
     confirmed && !regional.loading
       ? buildPlan(confirmed, forecast, preferences)
@@ -225,11 +232,7 @@ export function Planner() {
             onPreferences={setPreferences}
             onConfirm={confirm}
           />
-          <PlanComparison
-            plan={plan}
-            sample={sample}
-            forecastAvailable={Boolean(forecast)}
-          />
+          <PlanComparison plan={plan} forecastStatus={forecastStatus} />
         </div>
       </main>
       <footer className="site-width footer">

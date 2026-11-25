@@ -1,0 +1,241 @@
+import { describe, expect, it, vi } from "vitest";
+import { createForecastHandler } from "../../src/server/forecast-handler";
+import {
+  createForecastService,
+  normalizeForecast,
+} from "../../src/server/open-meteo";
+import { createRoutineExtractor, defaultModel } from "../../src/server/gemini";
+import { createRoutineHandler } from "../../src/server/routine-handler";
+
+const now = new Date("2026-01-01T19:00:00Z");
+const fixture = {
+  timezone: "Asia/Kolkata",
+  hourly: {
+    time: ["2026-01-02T23:00", "2026-01-03T00:00", "2026-01-03T01:00"],
+    us_aqi: [127, 0, 510],
+    pm2_5: [22, null, 39],
+    pm10: [56, 23, 64],
+    ozone: [19, 24, 27],
+  },
+};
+const config = { key: "fixture-key", model: defaultModel };
+const tasks = [
+  {
+    kind: "outdoor_exercise",
+    time: "07:00",
+    duration: null,
+    fixed: false,
+    travel: "unspecified",
+  },
+];
+const post = (body: unknown, headers: Record<string, string> = {}) =>
+  new Request("http://localhost/api/routine", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...headers },
+    body: JSON.stringify(body),
+  });
+const forecastRequest = (city: string) =>
+  new Request(`http://localhost/api/forecast?city=${city}`);
+
+function providerOutput(output: unknown) {
+  return Response.json({
+    status: "completed",
+    steps: [
+      { type: "thought" },
+      {
+        type: "model_output",
+        content: [{ type: "text", text: JSON.stringify(output) }],
+      },
+    ],
+  });
+}
+
+describe("forecast API with a mocked provider", () => {
+  it("uses IST tomorrow, keeps zero and 500+, and preserves missing fields", () => {
+    const forecast = normalizeForecast(fixture, "delhi", now);
+    expect(forecast.date).toBe("2026-01-03");
+    expect(forecast.hours).toMatchObject([
+      { hour: 0, aqi: 0, pm25: null, no2: null },
+      { hour: 1, aqi: 510, pm25: 39, no2: null },
+    ]);
+  });
+
+  it("rejects an unknown city before fetching", async () => {
+    const fetcher = vi.fn<typeof fetch>();
+    const get = createForecastHandler(
+      createForecastService(fetcher, () => now),
+    );
+    expect((await get(forecastRequest("toString"))).status).toBe(400);
+    expect((await get(forecastRequest("invalid"))).status).toBe(400);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("deduplicates concurrent requests and bounds freshness by time and city", async () => {
+    let time = now;
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockImplementation(async () => Response.json(fixture));
+    const get = createForecastHandler(
+      createForecastService(fetcher, () => time),
+    );
+    const results = await Promise.all([
+      get(forecastRequest("delhi")),
+      get(forecastRequest("delhi")),
+    ]);
+    expect(results.map((response) => response.status)).toEqual([200, 200]);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const url = new URL(String(fetcher.mock.calls[0][0]));
+    expect(url.searchParams.get("start_date")).toBe("2026-01-03");
+    expect(url.searchParams.get("end_date")).toBe("2026-01-03");
+    await get(forecastRequest("delhi"));
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    await get(forecastRequest("noida"));
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    time = new Date(now.getTime() + 15 * 60_000);
+    await get(forecastRequest("delhi"));
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+
+  it("handles timeouts and missing AQI independently", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(new DOMException("timeout", "TimeoutError"))
+      .mockResolvedValueOnce(
+        Response.json({
+          ...fixture,
+          hourly: { ...fixture.hourly, us_aqi: [null] },
+        }),
+      );
+    const get = createForecastHandler(
+      createForecastService(fetcher, () => now),
+    );
+    expect((await get(forecastRequest("delhi"))).status).toBe(503);
+    expect((await get(forecastRequest("delhi"))).status).toBe(502);
+  });
+});
+
+describe("routine API with a mocked Gemini provider", () => {
+  it("sends a server-side key, bounded schema and no tools, then validates and caches the extraction", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockImplementation(async () => providerOutput({ tasks }));
+    const handle = createRoutineHandler(
+      createRoutineExtractor(fetcher),
+      () => config,
+    );
+    const input = { routine: "Walk outdoors at 7 AM." };
+    const response = await handle(post(input, { origin: "http://localhost" }));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ tasks });
+    await handle(post(input));
+    expect(fetcher).toHaveBeenCalledTimes(1);
+
+    const [url, init] = fetcher.mock.calls[0];
+    expect(String(url)).toBe(
+      "https://generativelanguage.googleapis.com/v1beta/interactions",
+    );
+    expect(new Headers(init?.headers).get("x-goog-api-key")).toBe(config.key);
+    const payload = JSON.parse(String(init?.body));
+    expect(payload).toMatchObject({
+      input: input.routine,
+      model: defaultModel,
+      store: false,
+      response_format: { mime_type: "application/json" },
+    });
+    expect(payload).not.toHaveProperty("tools");
+  });
+
+  it("blocks invalid inputs, overly large bodies, and cross-site requests before calling Gemini", async () => {
+    const fetcher = vi.fn<typeof fetch>();
+    const handle = createRoutineHandler(
+      createRoutineExtractor(fetcher),
+      () => config,
+    );
+    expect((await handle(post({ routine: "x" }))).status).toBe(400);
+    expect((await handle(post({ routine: "x".repeat(900) }))).status).toBe(400);
+    expect((await handle(post({ routine: "x".repeat(4500) }))).status).toBe(
+      413,
+    );
+    expect(
+      (
+        await handle(
+          post(
+            { routine: "walk outdoors" },
+            { origin: "https://unrelated.example" },
+          ),
+        )
+      ).status,
+    ).toBe(403);
+    expect(
+      (await handle(post({ routine: "walk outdoors" }, { origin: "null" })))
+        .status,
+    ).toBe(403);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("rejects hallucinated fields and activities without returning provider text", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () =>
+      providerOutput({
+        tasks: [
+          {
+            ...tasks[0],
+            kind: "unexpected",
+            instructions: "untrusted content",
+          },
+        ],
+      }),
+    );
+    const handle = createRoutineHandler(
+      createRoutineExtractor(fetcher),
+      () => config,
+    );
+    const response = await handle(post({ routine: "Walk outdoors at seven." }));
+    expect(response.status).toBe(502);
+    expect(await response.text()).not.toContain("untrusted content");
+  });
+
+  it("returns useful fallbacks for missing configuration, timeouts and provider quotas", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(new DOMException("timeout", "TimeoutError"))
+      .mockResolvedValueOnce(new Response(null, { status: 429 }));
+    const extract = createRoutineExtractor(fetcher);
+    const input = { routine: "Take a walk." };
+    expect(
+      (
+        await createRoutineHandler(extract, () => ({
+          ...config,
+          key: undefined,
+        }))(post(input))
+      ).status,
+    ).toBe(503);
+    expect(fetcher).not.toHaveBeenCalled();
+    const configured = createRoutineHandler(extract, () => config);
+    expect((await configured(post(input))).status).toBe(503);
+    expect((await configured(post(input))).status).toBe(429);
+  });
+
+  it("limits uncached requests per process and lets the window expire", async () => {
+    let time = 0;
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockImplementation(async () => providerOutput({ tasks }));
+    const handle = createRoutineHandler(
+      createRoutineExtractor(fetcher, () => time),
+      () => config,
+    );
+    for (let i = 0; i < 5; i++) {
+      expect((await handle(post({ routine: `Take walk ${i}.` }))).status).toBe(
+        200,
+      );
+    }
+    expect((await handle(post({ routine: "Take a new walk." }))).status).toBe(
+      429,
+    );
+    expect(fetcher).toHaveBeenCalledTimes(5);
+    time = 60_001;
+    expect((await handle(post({ routine: "Take a new walk." }))).status).toBe(
+      200,
+    );
+  });
+});
