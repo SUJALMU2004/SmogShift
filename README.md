@@ -25,7 +25,7 @@ Choose **Regional forecast** to use tomorrow’s actual regional forecast in Ind
 | Server environment variable | Purpose                                                                                                       |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------- |
 | `GEMINI_API_KEY`            | Optional at startup. Enables Gemini routine extraction. Set it in `.env.local` or the deployment environment. |
-| `GEMINI_MODEL`              | Defaults to `gemini-4-hydrogen`. An override must support structured output on the Interactions API.          |
+| `GEMINI_MODEL`              | Defaults to `gemini-3.5-flash-lite`. An override must support structured output on the Interactions API.      |
 
 ## Architecture
 
