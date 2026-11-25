@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import {
   activityKinds,
@@ -80,65 +81,60 @@ export function createRoutineExtractor(
 ) {
   const recentCalls: number[] = [];
   const cache = new Map<string, { tasks: TaskDraft[]; expires: number }>();
+  const pending = new Map<string, Promise<TaskDraft[]>>();
 
-  return async (
-    routine: string,
-    config: { key: string | undefined; model: string },
-  ) => {
-    if (!config.key)
-      throw new HttpError(
-        503,
-        "Gemini is unavailable. Add your activities manually.",
-      );
-
+  function reserveCall() {
     const now = clock();
-    const hash = createHash("sha256")
-      .update(config.model)
-      .update("\0")
-      .update(routine)
-      .digest("hex");
-    const cached = cache.get(hash);
-    if (cached && cached.expires > now) return cached.tasks;
-    if (cached) cache.delete(hash);
     while (recentCalls.length && recentCalls[0] <= now - 60_000)
       recentCalls.shift();
-    if (recentCalls.length >= 5)
+    if (recentCalls.length >= 5) return false;
+    recentCalls.push(now);
+    return true;
+  }
+
+  async function fetchTasks(routine: string, key: string, model: string) {
+    if (!reserveCall())
       throw new HttpError(
         429,
         "The AI limit was reached. Try again in a minute or add activities manually.",
       );
-    recentCalls.push(now);
 
+    const signal = AbortSignal.timeout(12_000);
+    const url = "https://generativelanguage.googleapis.com/v1beta/interactions";
+    const request: RequestInit = {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Api-Revision": "2026-05-20",
+        "x-goog-api-key": key,
+      },
+      body: JSON.stringify({
+        model,
+        input: routine,
+        system_instruction: instructions,
+        store: false,
+        generation_config: {
+          max_output_tokens: 1600,
+          thinking_level: "low",
+        },
+        response_format: {
+          type: "text",
+          mime_type: "application/json",
+          schema: outputSchema,
+        },
+      }),
+      signal,
+      cache: "no-store",
+      redirect: "error",
+    };
     let response: Response;
     try {
-      response = await fetcher(
-        "https://generativelanguage.googleapis.com/v1beta/interactions",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Api-Revision": "2026-05-20",
-            "x-goog-api-key": config.key,
-          },
-          body: JSON.stringify({
-            model: config.model,
-            input: routine,
-            system_instruction: instructions,
-            store: false,
-            generation_config: {
-              max_output_tokens: 1600,
-              thinking_level: "low",
-            },
-            response_format: {
-              type: "text",
-              mime_type: "application/json",
-              schema: outputSchema,
-            },
-          }),
-          signal: AbortSignal.timeout(12_000),
-          cache: "no-store",
-        },
-      );
+      response = await fetcher(url, request);
+      if (response.status === 503) {
+        await response.body?.cancel();
+        await delay(1000, undefined, { signal });
+        if (reserveCall()) response = await fetcher(url, request);
+      }
     } catch {
       throw new HttpError(
         503,
@@ -193,14 +189,41 @@ export function createRoutineExtractor(
         "No activities were recognized. Try describing an activity and its time.",
       );
 
-    if (cache.size >= 32) {
-      const oldest = cache.keys().next();
-      if (!oldest.done) cache.delete(oldest.value);
-    }
-    cache.set(hash, {
-      tasks: extraction.data.tasks,
-      expires: now + 5 * 60_000,
-    });
     return extraction.data.tasks;
+  }
+
+  return async (
+    routine: string,
+    { key, model }: { key: string | undefined; model: string },
+  ) => {
+    if (!key)
+      throw new HttpError(
+        503,
+        "Gemini is unavailable. Add your activities manually.",
+      );
+
+    const hash = createHash("sha256")
+      .update(model)
+      .update("\0")
+      .update(routine)
+      .digest("hex");
+    const cached = cache.get(hash);
+    if (cached && cached.expires > clock()) return cached.tasks;
+    if (cached) cache.delete(hash);
+
+    const active = pending.get(hash);
+    if (active) return active;
+    const loading = fetchTasks(routine, key, model)
+      .then((tasks) => {
+        if (cache.size >= 32) {
+          const oldest = cache.keys().next();
+          if (!oldest.done) cache.delete(oldest.value);
+        }
+        cache.set(hash, { tasks, expires: clock() + 5 * 60_000 });
+        return tasks;
+      })
+      .finally(() => pending.delete(hash));
+    pending.set(hash, loading);
+    return loading;
   };
 }

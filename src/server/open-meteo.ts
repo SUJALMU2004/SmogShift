@@ -1,7 +1,7 @@
 import { z } from "zod";
 import {
   cities,
-  kolkataDate,
+  tomorrowInKolkata,
   type AirHour,
   type CityId,
   type Forecast,
@@ -29,11 +29,6 @@ const payloadSchema = z.object({
 });
 const cacheDuration = 15 * 60_000;
 
-function tomorrow(now: Date) {
-  // India Standard Time has no daylight-saving transitions.
-  return kolkataDate(new Date(now.getTime() + 86_400_000));
-}
-
 export function normalizeForecast(
   payload: unknown,
   city: CityId,
@@ -43,7 +38,7 @@ export function normalizeForecast(
   if (!parsed.success)
     throw new HttpError(502, "The forecast provider returned unreadable data.");
 
-  const date = tomorrow(now);
+  const date = tomorrowInKolkata(now);
   const { hourly } = parsed.data;
   const byHour = new Map<number, AirHour>();
   for (const [index, timestamp] of hourly.time.entries()) {
@@ -98,14 +93,15 @@ export function createForecastService(
     const url = new URL(
       "https://air-quality-api.open-meteo.com/v1/air-quality",
     );
+    const date = tomorrowInKolkata(now);
     url.search = new URLSearchParams({
       latitude: String(latitude),
       longitude: String(longitude),
       domains: "cams_global",
       hourly: fields.join(","),
       timezone: "Asia/Kolkata",
-      start_date: tomorrow(now),
-      end_date: tomorrow(now),
+      start_date: date,
+      end_date: date,
     }).toString();
 
     let response: Response;
@@ -131,15 +127,18 @@ export function createForecastService(
       city,
       now,
     );
-    if (tomorrow(clock()) === forecast.date) {
-      cache.set(city, { forecast, expires: now.getTime() + cacheDuration });
-    }
+    if (tomorrowInKolkata(clock()) !== forecast.date)
+      throw new HttpError(
+        503,
+        "The forecast day changed. Refresh and try again.",
+      );
+    cache.set(city, { forecast, expires: now.getTime() + cacheDuration });
     return forecast;
   }
 
   return async (city: CityId): Promise<Forecast> => {
     const now = clock();
-    const date = tomorrow(now);
+    const date = tomorrowInKolkata(now);
     const cached = cache.get(city);
     if (
       cached &&

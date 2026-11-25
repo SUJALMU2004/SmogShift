@@ -89,17 +89,19 @@ function findAlternative(
   const otherSlots = [...occupied]
     .filter(([id]) => id !== task.id)
     .map(([, slot]) => slot);
-  const starts = new Set([
-    window.start,
-    latest,
-    ...otherSlots.map(({ end }) => end),
-  ]);
-  for (
-    let start = Math.ceil(window.start / 30) * 30;
-    start <= latest;
-    start += 30
-  )
-    starts.add(start);
+  const starts = new Set([window.start, latest, original]);
+  for (const slot of otherSlots) {
+    starts.add(slot.start - task.duration);
+    starts.add(slot.end);
+  }
+  // The covered hours change when the first or last minute crosses an hour.
+  // Check both sides so the nearest eligible start can be at either edge.
+  for (let boundary = 60; boundary < 1440; boundary += 60) {
+    starts.add(boundary - 1);
+    starts.add(boundary);
+    starts.add(boundary - task.duration);
+    starts.add(boundary - task.duration + 1);
+  }
 
   let best: { start: number; peak: number; shift: number } | undefined;
   for (const start of starts) {

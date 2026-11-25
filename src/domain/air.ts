@@ -45,11 +45,9 @@ export function aqiBand(value: number | null) {
   return { label: "Beyond the AQI scale", tone: "hazardous" } as const;
 }
 
-export function kolkataDate(date: Date) {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Kolkata",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(date);
+/** Date of the next day in India Standard Time (UTC+05:30 year-round). */
+export function tomorrowInKolkata(now: Date) {
+  const day = 24 * 60 * 60_000;
+  const offset = (5 * 60 + 30) * 60_000;
+  return new Date(now.getTime() + day + offset).toISOString().slice(0, 10);
 }

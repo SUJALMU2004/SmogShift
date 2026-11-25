@@ -112,6 +112,22 @@ describe("forecast API with a mocked provider", () => {
     expect((await get(forecastRequest("delhi"))).status).toBe(503);
     expect((await get(forecastRequest("delhi"))).status).toBe(502);
   });
+
+  it("rejects a forecast completed after its date stops being tomorrow in IST", async () => {
+    let time = new Date("2026-01-02T18:29:59Z");
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => {
+      time = new Date("2026-01-02T18:30:01Z");
+      return Response.json(fixture);
+    });
+    const get = createForecastHandler(
+      createForecastService(fetcher, () => time),
+    );
+    expect((await get(forecastRequest("delhi"))).status).toBe(503);
+    expect((await get(forecastRequest("delhi"))).status).toBe(502);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    const nextUrl = new URL(String(fetcher.mock.calls[1][0]));
+    expect(nextUrl.searchParams.get("start_date")).toBe("2026-01-04");
+  });
 });
 
 describe("routine API with a mocked Gemini provider", () => {
@@ -135,6 +151,7 @@ describe("routine API with a mocked Gemini provider", () => {
       "https://generativelanguage.googleapis.com/v1beta/interactions",
     );
     expect(new Headers(init?.headers).get("x-goog-api-key")).toBe(config.key);
+    expect(init?.redirect).toBe("error");
     const payload = JSON.parse(String(init?.body));
     expect(payload).toMatchObject({
       input: input.routine,
@@ -143,6 +160,37 @@ describe("routine API with a mocked Gemini provider", () => {
       response_format: { mime_type: "application/json" },
     });
     expect(payload).not.toHaveProperty("tools");
+  });
+
+  it("shares the same provider request for simultaneous identical routines", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockImplementation(async () => providerOutput({ tasks }));
+    const extract = createRoutineExtractor(fetcher);
+    const input = "Walk outdoors at 7 AM.";
+    await expect(
+      Promise.all([extract(input, config), extract(input, config)]),
+    ).resolves.toEqual([tasks, tasks]);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries a temporary provider 503 once within the same deadline and quota", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockImplementation(async () => providerOutput({ tasks }));
+    const extract = createRoutineExtractor(fetcher);
+    await expect(extract("Walk outdoors.", config)).resolves.toEqual(tasks);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls[0][1]?.signal).toBe(
+      fetcher.mock.calls[1][1]?.signal,
+    );
+
+    for (let i = 0; i < 3; i++) await extract(`Walk outside ${i}.`, config);
+    await expect(extract("New walk routine.", config)).rejects.toMatchObject({
+      status: 429,
+    });
+    expect(fetcher).toHaveBeenCalledTimes(5);
   });
 
   it("blocks invalid inputs, overly large bodies, and cross-site requests before calling Gemini", async () => {
@@ -213,6 +261,7 @@ describe("routine API with a mocked Gemini provider", () => {
     const configured = createRoutineHandler(extract, () => config);
     expect((await configured(post(input))).status).toBe(503);
     expect((await configured(post(input))).status).toBe(429);
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
   it("rejects model attempts to assign private household options", async () => {

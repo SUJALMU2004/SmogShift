@@ -10,7 +10,10 @@ export class HttpError extends Error {
 export function errorResponse(error: unknown, fallback: string) {
   const status = error instanceof HttpError ? error.status : 503;
   const message = error instanceof HttpError ? error.message : fallback;
-  return Response.json({ error: message }, { status });
+  return Response.json(
+    { error: message },
+    { status, headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 export async function readJson(

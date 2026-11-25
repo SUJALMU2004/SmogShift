@@ -29,7 +29,7 @@ Choose **Regional forecast** to use tomorrow’s actual regional forecast in Ind
 
 ## Architecture
 
-- `src/app/api/forecast/route.ts` serves one of three allowlisted regional forecasts. `src/server/open-meteo.ts` normalizes the upstream response, caches by city for 15 minutes, and deduplicates simultaneous requests. The client cancels stale requests when the city changes.
+- `src/app/api/forecast/route.ts` serves one of three allowlisted regional forecasts. `src/server/open-meteo.ts` normalizes the upstream response, caches by city for up to 15 minutes, and deduplicates simultaneous requests. The client cancels stale requests when the city changes and refreshes the regional forecast at midnight IST.
 - `src/app/api/routine/route.ts` handles extraction. The only Gemini call is in `src/server/gemini.ts` via the **Gemini Interactions REST API**. Gemini extracts structured tasks and any stated move constraints. The output schema and the app validate activity types, times, durations, required status, and allowed move windows. Missing or ambiguous start times and durations need confirmation.
 - `src/domain/routine.ts` validates a single baseline schedule. `src/domain/planner.ts` builds a comparison from confirmed activities, the forecast, and local constraints. The decision contains a typed reason and the values used to explain it. The UI renders bilingual explanations from `src/i18n/messages.ts`.
 - `src/components/` separates the editor, individual activity controls, forecast, comparison, and request hooks. Activity options and household changes replan locally after confirmation. The chart has an equivalent hourly table, and plan updates are announced to screen readers.
@@ -42,23 +42,19 @@ Choose **Regional forecast** to use tomorrow’s actual regional forecast in Ind
 - The Open-Meteo feed uses the CAMS global model, at approximately 45 km spatial and three-hour native temporal resolution, with hourly values exposed by the API. These are regional estimates on the **US AQI scale**. The app also shows PM₂.₅, PM₁₀, NO₂, and O₃ when present and links to the official Delhi bulletin. Missing hours cannot qualify a proposed time.
 - Fewer outdoor minutes count planned minutes moved indoors or deferred. Time shifts keep the original duration and show the change in forecast AQI. Neither metric measures a person’s exposure or indoor air quality. Carpool savings are conditional on replacing a separate drive. Damp mopping and skipping incense address indoor sources without estimating a pollutant reduction.
 - A share preview contains only the generic pickup proposal, fixed pickup time, and the forecast date when available. If there is no dated forecast, the proposal asks the recipient to confirm the date. The demo uses a fictional label. Copying or opening WhatsApp leaves trip savings conditional.
-- Gemini receives optional routine text, with no weather data, household settings, or account information added by the application. Enter generic activities and omit personal information under Google’s free-tier terms. The endpoint has an input cap, same-origin browser checks, strict output validation, no model tool access, and a limit of five upstream requests per minute per server process. Its bounded cache keeps a digest and structured activities for five minutes. The limit is process-local and would need shared controls for multi-instance hosting.
+- Gemini receives only the routine text you choose to submit. Enter generic activities and omit personal information under Google’s free-tier terms. The endpoint has an input cap, same-origin browser checks, strict output validation, and no model tool access. It shares identical requests already in progress and caches a digest and structured activities for five minutes after success. Each upstream attempt, including the single retry on a temporary HTTP 503, counts toward the limit of five per minute per server process. Multi-instance hosting would need a shared limit.
 
 [Open-Meteo / CAMS forecast and attribution](https://open-meteo.com/en/docs/air-quality-api) · [US AQI bands](https://www.airnow.gov/aqi/aqi-basics/) · [AirNow activity guidance](https://document.airnow.gov/air-quality-guide-for-particle-pollution.pdf) · [India NCDC air pollution guidance](https://ncdc.mohfw.gov.in/uploads/pdf/air7.pdf) · [IITM Delhi bulletin](https://ews.tropmet.res.in/) · [Google free-tier terms](https://aistudio.google.com/docs/terms#data-use-unpaid)
 
 ## Verify
 
 ```sh
-npm run lint
-npm run typecheck
-npm run format:check
-npm test
+npm ci
 npx playwright install chromium
-npm run build
-npm run test:e2e
+npm run verify
 ```
 
-These checks work without API keys. Vitest covers scheduling, AQI edge cases, malformed inputs, caching, timeouts, throttling, and share formatting and field minimization. Thirty fictional routines (ten per language) test the extraction contract and whether the expected task drafts require confirmation with a mocked provider. Playwright covers the forecast-to-plan flow, Hindi review, request cancellation, the missing-key fallback, mobile accessibility, and the share link, including copy denial and stale previews. The WhatsApp destination is intercepted during automated tests.
+`npm run verify` runs lint, type checking, formatting, Vitest, the production build, and Playwright without API keys. Vitest covers scheduling, AQI edge cases, malformed inputs, caching, timeouts, throttling, and the fields included in a share message. Thirty fictional routines (ten per language) test the extraction contract and whether the expected task drafts require confirmation with a mocked provider. Playwright covers the forecast-to-plan flow, Hindi review, request cancellation, the missing-key fallback, keyboard navigation, mobile accessibility, and share previews, including copy denial and the midnight IST rollover. The WhatsApp destination is intercepted during automated tests.
 
 Use `npm run test:gemini` with `GEMINI_API_KEY` available in the environment or `.env.local` to run one live extraction smoke case each for English, Hindi, and Hinglish. That test is separate from the offline suite.
 

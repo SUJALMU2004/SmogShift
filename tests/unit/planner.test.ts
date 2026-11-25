@@ -130,6 +130,39 @@ describe("planning decisions", () => {
     expect(result.decisions[1]).toMatchObject({ kind: "kept", time: "11:45" });
   });
 
+  it("finds the closest equally clean start before a fixed commitment", () => {
+    const afternoonWalk = {
+      ...walk,
+      time: "12:00",
+      duration: 25,
+      earliestStart: "08:50",
+      latestEnd: "10:00",
+    };
+    const commitment: Task = {
+      ...walk,
+      id: "fixed",
+      kind: "other",
+      time: "09:47",
+      duration: 30,
+      fixed: true,
+    };
+    const result = buildPlan(
+      [afternoonWalk, commitment],
+      outlook({ 8: 220, 9: 80, 12: 210 }),
+      normal,
+    );
+    expect(result.decisions[1]).toMatchObject({ kind: "moved", time: "09:22" });
+  });
+
+  it("uses the last minute that ends before AQI rises in the next hour", () => {
+    const result = buildPlan(
+      [{ ...walk, time: "12:00", duration: 25 }],
+      outlook({ 9: 80, 10: 200, 12: 210 }),
+      normal,
+    );
+    expect(result.decisions[0]).toMatchObject({ kind: "moved", time: "09:35" });
+  });
+
   it("uses the sensitive household threshold and preserves fixed outdoor times", () => {
     const forecast = outlook({ 7: 140, 8: 140 });
     expect(buildPlan([walk], forecast, normal).decisions[0].kind).toBe("kept");

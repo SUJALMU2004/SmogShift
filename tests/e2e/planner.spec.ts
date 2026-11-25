@@ -4,7 +4,14 @@ import { sampleForecast } from "../../src/domain/sample";
 
 async function expectAccessibleMobileLayout(page: Page) {
   const { violations } = await new AxeBuilder({ page })
-    .withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa"])
+    .withTags([
+      "wcag2a",
+      "wcag2aa",
+      "wcag21a",
+      "wcag21aa",
+      "wcag22a",
+      "wcag22aa",
+    ])
     .analyze();
   expect(
     violations.map(({ id, nodes }) => ({
@@ -14,7 +21,7 @@ async function expectAccessibleMobileLayout(page: Page) {
   ).toEqual([]);
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth),
-  ).toBeLessThanOrEqual(360);
+  ).toBeLessThanOrEqual(page.viewportSize()!.width);
 }
 
 test("takes a Gemini routine through the regional forecast and updates the carpool impact", async ({
@@ -25,6 +32,7 @@ test("takes a Gemini routine through the regional forecast and updates the carpo
   const requests: string[] = [];
   const routine =
     "Subah 7 baje 30 min walk. 10 se 11 AM tak shift kar sakte hain. 3 PM school pickup by car, 25 min, fixed.";
+  await page.clock.setFixedTime(new Date("2026-01-02T10:00:00Z"));
   await page.route("**/api/forecast?city=noida", async (route) => {
     requests.push("forecast");
     await route.fulfill({
@@ -196,6 +204,7 @@ test("localizes a Hindi routine and keeps ambiguous times pending until reviewed
 test("keeps the newest region when the previous request is still pending", async ({
   page,
 }) => {
+  await page.clock.setFixedTime(new Date("2026-01-02T10:00:00Z"));
   let finishDelhi!: () => void;
   let observeDelhi!: () => void;
   const waitForDelhi = new Promise<void>((resolve) => {
@@ -243,7 +252,7 @@ test("keeps the newest region when the previous request is still pending", async
 test("has keyboard navigation and no detected WCAG AA violations at mobile width", async ({
   page,
 }) => {
-  await page.setViewportSize({ width: 360, height: 800 });
+  await page.setViewportSize({ width: 320, height: 800 });
   await page.goto("/");
   await page.keyboard.press("Tab");
   await expect(

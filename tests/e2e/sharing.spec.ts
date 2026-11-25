@@ -128,6 +128,7 @@ test("selects the preview when copy is denied and discards an obsolete invitatio
 test("reopens the current dated message in Hindi after switching language", async ({
   page,
 }) => {
+  await page.clock.setFixedTime(new Date("2026-11-25T08:30:00Z"));
   await page.route("**/api/forecast?city=delhi", (route) =>
     route.fulfill({
       json: {
@@ -159,4 +160,35 @@ test("reopens the current dated message in Hindi after switching language", asyn
   expect(new URL(href!).searchParams.get("text")).toBe(
     await preview.inputValue(),
   );
+});
+
+test("refreshes the regional forecast and invalidates the old proposal at midnight IST", async ({
+  page,
+}) => {
+  await page.clock.install({ time: new Date("2026-11-25T18:29:30Z") });
+  let requests = 0;
+  await page.route("**/api/forecast?city=delhi", (route) =>
+    route.fulfill({
+      json: {
+        ...sampleForecast("delhi"),
+        source: "open-meteo",
+        date: requests++ === 0 ? "2026-11-26" : "2026-11-27",
+      },
+    }),
+  );
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Regional forecast" }).click();
+  await expect(page.getByText("~45 km grid")).toBeVisible();
+  await page.getByRole("checkbox", { name: "Carpool is possible" }).check();
+  const share = page.getByText("Share pickup proposal", { exact: true });
+  const preview = page.getByRole("textbox", { name: "Message preview" });
+  await share.click();
+  await expect(preview).toHaveValue(/26 November 2026/);
+
+  await page.clock.fastForward(60_000);
+  await expect(preview).toBeHidden();
+  await share.click();
+  await expect(preview).toHaveValue(/27 November 2026/);
+  expect(requests).toBe(2);
 });
