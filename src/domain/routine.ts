@@ -21,7 +21,7 @@ export const maxTasks = 10;
 export const routineRequest = z.strictObject({
   routine: z.string().trim().min(3).max(800),
 });
-const timeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
+export const timeSchema = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
 const durationSchema = z.number().int().min(1).max(240);
 
 // Only these fields may cross the Gemini boundary.

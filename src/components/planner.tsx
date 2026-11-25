@@ -213,6 +213,7 @@ export function Planner() {
             drafts={drafts}
             preferences={preferences}
             extracting={assistant.extracting}
+            hasPlan={plan !== null}
             aiStatus={assistant.status}
             issue={
               (confirmed || assistant.needsReview) && !reviewed.ok
@@ -235,7 +236,8 @@ export function Planner() {
           <PlanComparison
             plan={plan}
             forecastStatus={forecastStatus}
-            text={text}
+            forecast={forecast}
+            locale={locale}
           />
         </div>
       </main>

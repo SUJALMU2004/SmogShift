@@ -1,4 +1,4 @@
-import { ClipboardList, Plus, Sparkles } from "lucide-react";
+import { ArrowDown, ClipboardList, Plus, Sparkles } from "lucide-react";
 import {
   maxTasks,
   type EditableTask,
@@ -15,6 +15,7 @@ type Props = {
   drafts: EditableTask[];
   preferences: Preferences;
   extracting: boolean;
+  hasPlan: boolean;
   aiStatus: ExtractionStatus | null;
   issue: RoutineIssue | null;
   onRoutine: (routine: string) => void;
@@ -49,6 +50,7 @@ export function RoutineEditor({
   issue,
   aiStatus,
   extracting,
+  hasPlan,
   routine,
   onConfirm,
   onRoutine,
@@ -179,9 +181,20 @@ export function RoutineEditor({
             {text.issueCount}
           </p>
         )}
-        <button className="button primary" type="submit" disabled={extracting}>
-          {text.compare}
-        </button>
+        <div className="editor-actions">
+          <button
+            className="button primary"
+            type="submit"
+            disabled={extracting}
+          >
+            {text.compare}
+          </button>
+          {hasPlan && (
+            <a className="button secondary" href="#comparison-heading">
+              {text.jumpToPlan} <ArrowDown size={16} aria-hidden />
+            </a>
+          )}
+        </div>
       </form>
     </section>
   );

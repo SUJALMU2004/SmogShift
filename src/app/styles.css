@@ -899,6 +899,68 @@ textarea,
   color: #654318;
 }
 
+.editor-actions,
+.share-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.editor-actions a,
+.share-actions a {
+  text-decoration: none;
+}
+
+#comparison-heading {
+  scroll-margin-top: 1rem;
+}
+
+.share-proposal {
+  border-top: 1px solid var(--border);
+  margin-top: 10px;
+}
+
+.share-proposal summary {
+  min-height: 44px;
+  padding: 10px 2px;
+  cursor: pointer;
+  color: var(--green-dark);
+  font-size: 14px;
+  font-weight: 680;
+}
+
+.share-proposal summary svg {
+  vertical-align: -3px;
+  margin-inline: 3px;
+}
+
+.share-body {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #f8faf5;
+}
+
+.share-body label {
+  font-weight: 650;
+}
+
+.share-body textarea {
+  box-sizing: border-box;
+  width: 100%;
+  color: var(--ink);
+}
+
+.share-body p {
+  margin: 0;
+}
+
+.share-body .share-status {
+  color: var(--green-dark);
+}
+
 :lang(hi) h1,
 :lang(hi) h2 {
   letter-spacing: normal;

@@ -70,6 +70,23 @@ const en = {
   householdSensitive: "Someone is sensitive to air pollution",
   carpoolPossible: "Carpool is possible",
   compare: "Compare plans",
+  jumpToPlan: "Jump to plan",
+  share: {
+    title: "Share pickup proposal",
+    preview: "Message preview",
+    open: "Open WhatsApp",
+    copy: "Copy message",
+    copied: "Message copied.",
+    manualCopy:
+      "Automatic copy is unavailable. Copy the selected text or select it manually.",
+    handoffNote: "Choose a recipient and send in WhatsApp.",
+    demoMessage: (time: string) =>
+      `SmogShift demo · fictional pickup\n\nCould we share the ${time} IST school pickup? If this would replace a separate drive, let’s confirm the details in chat.`,
+    datedMessage: (date: string, time: string) =>
+      `Could we share the school pickup on ${date} at ${time} IST? If this would replace a separate drive, let’s confirm the details in chat.`,
+    undatedMessage: (time: string) =>
+      `Could we share a school pickup at ${time} IST? If this would replace a separate drive, let’s confirm the date and details in chat.`,
+  },
   issueCount: "Add between 1 and 10 activities.",
   comparison: "Plan comparison",
   comparisonSample: "Suggestions for the fictional forecast.",
@@ -247,6 +264,22 @@ const hi = {
   householdSensitive: "परिवार में कोई वायु प्रदूषण के प्रति संवेदनशील है",
   carpoolPossible: "साझा गाड़ी से जाना संभव है",
   compare: "योजनाओं की तुलना करें",
+  jumpToPlan: "तुलना पर जाएँ",
+  share: {
+    title: "साझा यात्रा का प्रस्ताव भेजें",
+    preview: "संदेश का पूर्वावलोकन",
+    open: "WhatsApp खोलें",
+    copy: "संदेश कॉपी करें",
+    copied: "संदेश कॉपी हो गया।",
+    manualCopy: "संदेश अपने आप कॉपी नहीं हो सका। चुना हुआ पाठ कॉपी करें या खुद चुनें।",
+    handoffNote: "WhatsApp में प्राप्तकर्ता चुनें और संदेश भेजें।",
+    demoMessage: (time: string) =>
+      `SmogShift डेमो · काल्पनिक स्कूल पिकअप\n\nक्या हम ${time} IST पर स्कूल से लेने के लिए गाड़ी साझा कर सकते हैं? अगर इससे अलग गाड़ी से जाना बचे, तो चैट में विवरण तय करें।`,
+    datedMessage: (date: string, time: string) =>
+      `क्या हम ${date} को ${time} IST पर स्कूल से लेने के लिए गाड़ी साझा कर सकते हैं? अगर इससे अलग गाड़ी से जाना बचे, तो चैट में विवरण तय करें।`,
+    undatedMessage: (time: string) =>
+      `क्या हम ${time} IST पर स्कूल से लेने के लिए गाड़ी साझा कर सकते हैं? अगर इससे अलग गाड़ी से जाना बचे, तो चैट में तारीख और विवरण तय करें।`,
+  },
   issueCount: "१ से १० गतिविधियाँ जोड़ें।",
   comparison: "योजनाओं की तुलना",
   comparisonSample: "काल्पनिक पूर्वानुमान पर आधारित सुझाव।",

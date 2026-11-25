@@ -7,18 +7,28 @@ import {
   LockKeyhole,
   Wind,
 } from "lucide-react";
+import type { Forecast } from "../domain/air";
 import type { buildPlan } from "../domain/planner";
 import { isFixed } from "../domain/routine";
-import type { Messages } from "../i18n/messages";
+import { buildPickupProposal } from "../domain/share";
+import { messages, type Locale } from "../i18n/messages";
 import { decisionCopy } from "./decision-copy";
+import { ShareProposal } from "./share-proposal";
 
 type Props = {
   plan: ReturnType<typeof buildPlan> | null;
   forecastStatus: "sample" | "loading" | "ready" | "unavailable";
-  text: Messages;
+  forecast: Pick<Forecast, "source" | "date"> | null;
+  locale: Locale;
 };
 
-export function PlanComparison({ plan, forecastStatus, text }: Props) {
+export function PlanComparison({
+  plan,
+  forecastStatus,
+  forecast,
+  locale,
+}: Props) {
+  const text = messages[locale];
   const forecastDescriptions = {
     sample: text.comparisonSample,
     loading: text.comparisonLoading,
@@ -37,7 +47,9 @@ export function PlanComparison({ plan, forecastStatus, text }: Props) {
           <CalendarCheck size={20} aria-hidden />
         </span>
         <div>
-          <h2 id="comparison-heading">{text.comparison}</h2>
+          <h2 id="comparison-heading" tabIndex={-1}>
+            {text.comparison}
+          </h2>
           <p>{forecastDescriptions[forecastStatus]}</p>
         </div>
       </div>
@@ -87,6 +99,7 @@ export function PlanComparison({ plan, forecastStatus, text }: Props) {
           <ol className="decisions">
             {plan.decisions.map((decision) => {
               const copy = decisionCopy(decision, text);
+              const proposal = buildPickupProposal(decision, forecast, locale);
               return (
                 <li className="decision" key={decision.original.id}>
                   <div className="decision-top">
@@ -127,6 +140,13 @@ export function PlanComparison({ plan, forecastStatus, text }: Props) {
                     </div>
                   </div>
                   <p>{copy.reason}</p>
+                  {proposal && (
+                    <ShareProposal
+                      key={proposal.message}
+                      proposal={proposal}
+                      text={text.share}
+                    />
+                  )}
                 </li>
               );
             })}
