@@ -1,28 +1,50 @@
-import { aqiBand, type Forecast } from "./air";
+import type { Forecast } from "./air";
 import {
-  activities,
+  explicitWindow,
+  isFixed,
+  isOutdoor,
+  isRequired,
   minutesToTime,
   timeToMinutes,
   type Preferences,
   type Task,
 } from "./routine";
 
+type Reason =
+  | {
+      code:
+        "fixed" | "keep" | "pickup" | "incense" | "mop" | "carpool" | "unknown";
+    }
+  | {
+      code:
+        | "below"
+        | "lockedHigh"
+        | "lockedIndoor"
+        | "indoor"
+        | "optionalDeferral"
+        | "requiredReview";
+      peak: number;
+      cutoff: number;
+    }
+  | { code: "move"; peak: number; newPeak: number; cutoff: number };
+
 export type Decision = {
   original: Task;
   time: string | null;
-  title: string;
-  reason: string;
-  kind: "kept" | "moved" | "indoors" | "deferred" | "carpool" | "source";
+  reason: Reason;
+  kind:
+    "kept" | "moved" | "indoors" | "deferred" | "carpool" | "source" | "review";
   outdoorMinutesAvoided: number;
   conditionalRoundTrips: number;
   sourcesRemoved: number;
 };
 
-function unchanged(task: Task, reason: string): Decision {
+type Slot = { start: number; end: number };
+
+function unchanged(original: Task, reason: Reason): Decision {
   return {
-    original: task,
-    time: task.time,
-    title: activities[task.kind],
+    original,
+    time: original.time,
     reason,
     kind: "kept",
     outdoorMinutesAvoided: 0,
@@ -32,7 +54,7 @@ function unchanged(task: Task, reason: string): Decision {
 }
 
 function peakInWindow(
-  aqiByHour: Map<number, number | null>,
+  aqiByHour: ReadonlyMap<number, number | null>,
   start: number,
   duration: number,
 ) {
@@ -49,48 +71,137 @@ function peakInWindow(
   return peak;
 }
 
-function isOutdoor(task: Task) {
-  return task.kind === "outdoor_exercise" || task.kind === "outdoor_errand";
-}
-
 function findAlternative(
   task: Task,
-  occupied: ReadonlyMap<string, { start: number; end: number }>,
-  aqiByHour: Map<number, number | null>,
+  occupied: ReadonlyMap<string, Slot>,
+  aqiByHour: ReadonlyMap<number, number | null>,
   cutoff: number,
 ) {
   const original = timeToMinutes(task.time);
-  let best: { start: number; peak: number } | undefined;
-  // Only offer same-day blocks within four hours of the original start.
+  const window =
+    task.earliestStart || task.latestEnd
+      ? explicitWindow(task)
+      : {
+          start: Math.max(360, original - 240),
+          end: Math.min(1260, original + 240 + task.duration),
+        };
+  const latest = window.end - task.duration;
+  const otherSlots = [...occupied]
+    .filter(([id]) => id !== task.id)
+    .map(([, slot]) => slot);
+  const starts = new Set([
+    window.start,
+    latest,
+    ...otherSlots.map(({ end }) => end),
+  ]);
   for (
-    let start = Math.max(6 * 60, original - 240);
-    start <= original + 240 && start + task.duration <= 21 * 60;
+    let start = Math.ceil(window.start / 30) * 30;
+    start <= latest;
     start += 30
-  ) {
-    const peak = peakInWindow(aqiByHour, start, task.duration);
-    if (peak === null || peak >= cutoff) continue;
+  )
+    starts.add(start);
+
+  let best: { start: number; peak: number; shift: number } | undefined;
+  for (const start of starts) {
     if (
-      [...occupied].some(
-        ([id, slot]) =>
-          id !== task.id &&
-          start < slot.end &&
-          start + task.duration > slot.start,
+      start < window.start ||
+      start > latest ||
+      otherSlots.some(
+        (slot) => start < slot.end && start + task.duration > slot.start,
       )
     )
       continue;
+    const peak = peakInWindow(aqiByHour, start, task.duration);
+    if (peak === null || peak >= cutoff) continue;
+    const shift = Math.abs(start - original);
     if (
       !best ||
       peak < best.peak ||
       (peak === best.peak &&
-        Math.abs(start - original) < Math.abs(best.start - original))
+        (shift < best.shift || (shift === best.shift && start < best.start)))
     ) {
-      best = { start, peak };
+      best = { start, peak, shift };
     }
   }
   return best;
 }
 
-/** Plan confirmed activities for a single regional forecast day without side effects. */
+function outdoorDecision(
+  task: Task,
+  aqiByHour: ReadonlyMap<number, number | null>,
+  occupied: Map<string, Slot>,
+  preferences: Preferences,
+): Decision {
+  const sensitive =
+    task.sensitivity === "sensitive" ||
+    (task.sensitivity !== "general" && preferences.sensitive);
+  // Cutoffs use the US AQI bands consumed by the forecast adapter.
+  const cutoff = sensitive ? 101 : 151;
+  const peak = peakInWindow(aqiByHour, timeToMinutes(task.time), task.duration);
+
+  if (peak === null) return unchanged(task, { code: "unknown" });
+  if (peak < cutoff) return unchanged(task, { code: "below", peak, cutoff });
+  const fixed = isFixed(task);
+  const alternative = fixed
+    ? undefined
+    : findAlternative(task, occupied, aqiByHour, cutoff);
+  if (alternative) {
+    occupied.set(task.id, {
+      start: alternative.start,
+      end: alternative.start + task.duration,
+    });
+    return {
+      ...unchanged(task, {
+        code: "move",
+        peak,
+        newPeak: alternative.peak,
+        cutoff,
+      }),
+      kind: "moved",
+      time: minutesToTime(alternative.start),
+    };
+  }
+  if (task.kind === "outdoor_exercise" && task.indoorAvailable) {
+    return {
+      ...unchanged(task, {
+        code: fixed ? "lockedIndoor" : "indoor",
+        peak,
+        cutoff,
+      }),
+      kind: "indoors",
+      outdoorMinutesAvoided: task.duration,
+    };
+  }
+  if (fixed) return unchanged(task, { code: "lockedHigh", peak, cutoff });
+  if (isRequired(task)) {
+    return {
+      ...unchanged(task, { code: "requiredReview", peak, cutoff }),
+      kind: "review",
+    };
+  }
+  occupied.delete(task.id);
+  return {
+    ...unchanged(task, { code: "optionalDeferral", peak, cutoff }),
+    kind: "deferred",
+    time: null,
+    outdoorMinutesAvoided: task.duration,
+  };
+}
+
+function indoorDecision(task: Task, occupied: Map<string, Slot>): Decision {
+  const incense = task.kind === "burn_incense";
+  if (incense && isFixed(task)) return unchanged(task, { code: "fixed" });
+  if (incense && isRequired(task)) return unchanged(task, { code: "keep" });
+  if (incense) occupied.delete(task.id);
+  return {
+    ...unchanged(task, { code: incense ? "incense" : "mop" }),
+    kind: "source",
+    time: incense ? null : task.time,
+    sourcesRemoved: 1,
+  };
+}
+
+/** Replan one confirmed schedule. Required activities get priority for alternative slots. */
 export function buildPlan(
   tasks: readonly Task[],
   forecast: Forecast | null,
@@ -99,136 +210,50 @@ export function buildPlan(
   const aqiByHour = new Map(
     forecast?.hours.map(({ hour, aqi }) => [hour, aqi]),
   );
-  const cutoff = preferences.sensitive ? 101 : 151;
-  const sorted = [...tasks].sort((first, second) =>
-    first.time.localeCompare(second.time),
-  );
+  const timeline = [...tasks].sort((a, b) => a.time.localeCompare(b.time));
   const occupied = new Map(
-    sorted.map((task) => {
+    timeline.map((task) => {
       const start = timeToMinutes(task.time);
       return [task.id, { start, end: start + task.duration }];
     }),
   );
-  let offeredCarpool = false;
+  const carpoolPickup = preferences.carpool
+    ? timeline.find(
+        (task) => task.kind === "school_pickup" && task.travel === "car",
+      )?.id
+    : undefined;
 
-  const decisions = sorted.map((task): Decision => {
-    if (
-      task.kind === "school_pickup" &&
-      task.travel === "car" &&
-      preferences.carpool &&
-      !offeredCarpool
-    ) {
-      offeredCarpool = true;
-      return {
-        ...unchanged(
-          task,
-          "Pickup time stays fixed. Count the saving only if this shared ride replaces a separate car round trip.",
-        ),
-        kind: "carpool",
-        title: "Share the school pickup ride",
-        conditionalRoundTrips: 1,
-      };
-    }
-
-    if (task.kind === "school_pickup") {
-      return unchanged(task, "Keep the school pickup at its scheduled time.");
-    }
-
-    if (task.fixed) {
-      if (isOutdoor(task)) {
-        const peak = peakInWindow(
-          aqiByHour,
-          timeToMinutes(task.time),
-          task.duration,
-        );
-        if (peak !== null && peak >= cutoff) {
-          return unchanged(
-            task,
-            `Time is locked and the forecast peaks at US AQI ${peak} during this block. Reduce time or exertion outdoors where feasible.`,
-          );
-        }
+  const priority = [...timeline].sort(
+    (a, b) => Number(isRequired(b)) - Number(isRequired(a)),
+  );
+  const decisions = priority
+    .map((task): Decision => {
+      if (task.id === carpoolPickup) {
+        return {
+          ...unchanged(task, { code: "carpool" }),
+          kind: "carpool",
+          conditionalRoundTrips: 1,
+        };
       }
-      return unchanged(task, "You marked this activity as fixed.");
-    }
+      if (task.kind === "school_pickup")
+        return unchanged(task, { code: "pickup" });
+      if (isOutdoor(task))
+        return outdoorDecision(task, aqiByHour, occupied, preferences);
+      if (task.kind === "burn_incense" || task.kind === "dry_sweeping")
+        return indoorDecision(task, occupied);
+      return unchanged(task, { code: isFixed(task) ? "fixed" : "keep" });
+    })
+    .sort((a, b) => a.original.time.localeCompare(b.original.time));
 
-    if (task.kind === "burn_incense" || task.kind === "dry_sweeping") {
-      const incense = task.kind === "burn_incense";
-      if (incense) occupied.delete(task.id);
-      return {
-        ...unchanged(
-          task,
-          incense
-            ? "Skipping incense removes a source of indoor smoke."
-            : "A damp mop traps settled dust that dry sweeping can stir up.",
-        ),
-        kind: "source",
-        title: incense ? "Skip incense" : "Damp mop instead",
-        time: incense ? null : task.time,
-        sourcesRemoved: 1,
-      };
-    }
-
-    if (!isOutdoor(task))
-      return unchanged(task, "Keep this activity as entered.");
-
-    const start = timeToMinutes(task.time);
-    const peak = peakInWindow(aqiByHour, start, task.duration);
-    if (peak === null)
-      return unchanged(
-        task,
-        "Forecast coverage is incomplete for this activity.",
-      );
-    if (peak < cutoff)
-      return unchanged(
-        task,
-        `Forecast peak for this block is US AQI ${peak} (${aqiBand(peak).label.toLowerCase()}).`,
-      );
-
-    const alternative = findAlternative(task, occupied, aqiByHour, cutoff);
-    if (alternative) {
-      occupied.set(task.id, {
-        start: alternative.start,
-        end: alternative.start + task.duration,
-      });
-      return {
-        ...unchanged(
-          task,
-          `The forecast peak drops from US AQI ${peak} to ${alternative.peak} for the same duration.`,
-        ),
-        kind: "moved",
-        time: minutesToTime(alternative.start),
-        title: `Reschedule ${activities[task.kind].toLowerCase()}`,
-      };
-    }
-
-    const exercise = task.kind === "outdoor_exercise";
-    if (!exercise) occupied.delete(task.id);
-    return {
-      ...unchanged(
-        task,
-        `The original block peaks at US AQI ${peak}. No suitable alternative outdoor block was found nearby in time.`,
-      ),
-      kind: exercise ? "indoors" : "deferred",
-      time: exercise ? task.time : null,
-      title: exercise ? "Move exercise indoors" : "Defer the outdoor errand",
-      outdoorMinutesAvoided: task.duration,
-    };
-  });
-
-  const impact = {
-    outdoorMinutesAvoided: decisions.reduce(
-      (total, item) => total + item.outdoorMinutesAvoided,
-      0,
-    ),
-    conditionalRoundTrips: decisions.reduce(
-      (total, item) => total + item.conditionalRoundTrips,
-      0,
-    ),
-    sourcesRemoved: decisions.reduce(
-      (total, item) => total + item.sourcesRemoved,
-      0,
-    ),
-  };
-
+  const impact = decisions.reduce(
+    (total, item) => ({
+      outdoorMinutesAvoided:
+        total.outdoorMinutesAvoided + item.outdoorMinutesAvoided,
+      conditionalRoundTrips:
+        total.conditionalRoundTrips + item.conditionalRoundTrips,
+      sourcesRemoved: total.sourcesRemoved + item.sourcesRemoved,
+    }),
+    { outdoorMinutesAvoided: 0, conditionalRoundTrips: 0, sourcesRemoved: 0 },
+  );
   return { decisions, impact };
 }

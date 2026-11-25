@@ -1,39 +1,64 @@
-import { ClipboardList, Plus, Sparkles, Trash2 } from "lucide-react";
+import { ClipboardList, Plus, Sparkles } from "lucide-react";
 import {
-  activities,
-  activityKinds,
   maxTasks,
-  travelModes,
   type EditableTask,
   type Preferences,
+  type RoutineIssue,
 } from "../domain/routine";
+import type { Messages } from "../i18n/messages";
+import { TaskEditor } from "./task-editor";
+import type { ExtractionStatus } from "./use-routine-extraction";
 
 type Props = {
+  text: Messages;
   routine: string;
   drafts: EditableTask[];
   preferences: Preferences;
   extracting: boolean;
-  aiStatus: string;
-  error: string;
+  aiStatus: ExtractionStatus | null;
+  issue: RoutineIssue | null;
   onRoutine: (routine: string) => void;
   onExtract: () => void;
   onEdit: (id: string, values: Partial<EditableTask>) => void;
+  onAdjust: (id: string, values: Partial<EditableTask>) => void;
   onAdd: () => void;
   onRemove: (id: string) => void;
   onPreferences: (preferences: Preferences) => void;
   onConfirm: () => void;
 };
 
-const travelLabels = {
-  unspecified: "Unspecified",
-  car: "Car",
-  transit: "Public transit",
-  walk: "Walk",
-  cycle: "Cycle",
-};
+function issueMessage(
+  issue: Exclude<RoutineIssue, { code: "count" }>,
+  text: Messages,
+) {
+  const index = issue.index + 1;
+  switch (issue.code) {
+    case "activity":
+      return text.issueActivity(index);
+    case "window":
+      return text.issueWindow(index);
+    case "conflict":
+      return text.issueConflict(index);
+  }
+}
 
-export function RoutineEditor(props: Props) {
-  const { drafts, preferences } = props;
+export function RoutineEditor({
+  text,
+  drafts,
+  preferences,
+  issue,
+  aiStatus,
+  extracting,
+  routine,
+  onConfirm,
+  onRoutine,
+  onExtract,
+  onEdit,
+  onAdjust,
+  onAdd,
+  onRemove,
+  onPreferences,
+}: Props) {
   return (
     <section className="card editor" aria-labelledby="routine-heading">
       <div className="card-heading">
@@ -41,204 +66,121 @@ export function RoutineEditor(props: Props) {
           <ClipboardList size={20} aria-hidden />
         </span>
         <div>
-          <h2 id="routine-heading">Your routine</h2>
-          <p>Add activities and lock the ones that can’t move.</p>
+          <h2 id="routine-heading">{text.routine}</h2>
+          <p>{text.routineBody}</p>
         </div>
       </div>
       <form
+        noValidate
         onSubmit={(event) => {
           event.preventDefault();
-          props.onConfirm();
+          onConfirm();
         }}
       >
         <details className="ai-entry">
           <summary>
-            <Sparkles size={16} aria-hidden /> Extract activities with Gemini
+            <Sparkles size={16} aria-hidden /> {text.extractDetails}
           </summary>
           <div className="ai-fields">
-            <label htmlFor="routine-text">Describe your day</label>
+            <label htmlFor="routine-text">{text.describe}</label>
             <textarea
               id="routine-text"
-              value={props.routine}
-              onChange={(event) => props.onRoutine(event.target.value)}
+              value={routine}
+              onChange={(event) => onRoutine(event.target.value)}
               maxLength={800}
               rows={3}
-              aria-describedby="routine-privacy"
-              disabled={props.extracting}
+              aria-describedby="routine-languages routine-privacy"
+              disabled={extracting}
             />
+            <p className="subtle" id="routine-languages">
+              {text.inputLanguages}
+            </p>
             <p className="subtle" id="routine-privacy">
-              This text is sent to Google. Use generic activities and leave out
-              names, addresses, and health details.
+              {text.privacy}
             </p>
             <button
               className="button secondary"
               type="button"
-              onClick={props.onExtract}
-              disabled={props.extracting || props.routine.trim().length < 3}
+              onClick={onExtract}
+              disabled={extracting || routine.trim().length < 3}
             >
-              {props.extracting ? "Extracting…" : "Extract with Gemini"}
+              {extracting ? text.extracting : text.extract}
             </button>
           </div>
         </details>
         <p className="sr-only" role="status">
-          {props.aiStatus && !props.aiStatus.startsWith("Error:")
-            ? props.aiStatus
-            : ""}
+          {aiStatus?.kind === "success" ? aiStatus.message : ""}
         </p>
-        {props.aiStatus.startsWith("Error:") ? (
+        {aiStatus?.kind === "error" && (
           <p className="inline-message" role="alert">
-            {props.aiStatus.slice(7)}
+            {aiStatus.message}
           </p>
-        ) : (
-          props.aiStatus && (
-            <p className="inline-message success" aria-hidden="true">
-              {props.aiStatus}
-            </p>
-          )
         )}
+        {aiStatus?.kind === "success" && (
+          <p className="inline-message success" aria-hidden="true">
+            {aiStatus.message}
+          </p>
+        )}
+
         <div className="task-list">
           {drafts.map((task, index) => (
-            <fieldset className="task" key={task.id}>
-              <legend className="sr-only">Activity {index + 1}</legend>
-              <div className="task-top">
-                <label className="task-kind">
-                  <span className="sr-only">Activity type</span>
-                  <select
-                    value={task.kind}
-                    onChange={(event) =>
-                      props.onEdit(task.id, {
-                        kind: event.target.value as EditableTask["kind"],
-                      })
-                    }
-                  >
-                    {activityKinds.map((kind) => (
-                      <option key={kind} value={kind}>
-                        {activities[kind]}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <button
-                  className="icon-button"
-                  type="button"
-                  onClick={() => props.onRemove(task.id)}
-                  aria-label={`Remove activity ${index + 1}`}
-                >
-                  <Trash2 size={16} aria-hidden />
-                </button>
-              </div>
-              <div className="task-fields">
-                <label>
-                  Start
-                  <input
-                    type="time"
-                    value={task.time ?? ""}
-                    onChange={(event) =>
-                      props.onEdit(task.id, {
-                        time: event.target.value || null,
-                      })
-                    }
-                  />
-                </label>
-                <label>
-                  Minutes
-                  <input
-                    type="number"
-                    min={1}
-                    max={240}
-                    value={task.duration ?? ""}
-                    onChange={(event) =>
-                      props.onEdit(task.id, {
-                        duration:
-                          event.target.value === ""
-                            ? null
-                            : event.target.valueAsNumber,
-                      })
-                    }
-                  />
-                </label>
-                {task.kind === "school_pickup" && (
-                  <label>
-                    Travel
-                    <select
-                      value={task.travel}
-                      onChange={(event) =>
-                        props.onEdit(task.id, {
-                          travel: event.target.value as EditableTask["travel"],
-                        })
-                      }
-                    >
-                      {travelModes.map((mode) => (
-                        <option key={mode} value={mode}>
-                          {travelLabels[mode]}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                )}
-                <label className="checkbox lock">
-                  <input
-                    type="checkbox"
-                    checked={task.fixed || task.kind === "school_pickup"}
-                    disabled={task.kind === "school_pickup"}
-                    onChange={(event) =>
-                      props.onEdit(task.id, { fixed: event.target.checked })
-                    }
-                  />{" "}
-                  Fixed time
-                </label>
-              </div>
-            </fieldset>
+            <TaskEditor
+              key={task.id}
+              task={task}
+              index={index}
+              text={text}
+              issue={
+                issue && issue.code !== "count" && issue.index === index
+                  ? issueMessage(issue, text)
+                  : undefined
+              }
+              onEdit={(changes) => onEdit(task.id, changes)}
+              onAdjust={(changes) => onAdjust(task.id, changes)}
+              onRemove={() => onRemove(task.id)}
+            />
           ))}
         </div>
         <button
           className="text-button"
           type="button"
-          onClick={props.onAdd}
-          disabled={drafts.length >= maxTasks || props.extracting}
+          onClick={onAdd}
+          disabled={drafts.length >= maxTasks || extracting}
         >
-          <Plus size={17} aria-hidden /> Add activity
+          <Plus size={17} aria-hidden /> {text.add}
         </button>
         <fieldset className="preferences">
-          <legend>Household constraints</legend>
+          <legend>{text.household}</legend>
           <label className="checkbox">
             <input
               type="checkbox"
               checked={preferences.sensitive}
               onChange={(event) =>
-                props.onPreferences({
+                onPreferences({
                   ...preferences,
                   sensitive: event.target.checked,
                 })
               }
-            />{" "}
-            Someone is sensitive to air pollution
+            />
+            {text.householdSensitive}
           </label>
           <label className="checkbox">
             <input
               type="checkbox"
               checked={preferences.carpool}
               onChange={(event) =>
-                props.onPreferences({
-                  ...preferences,
-                  carpool: event.target.checked,
-                })
+                onPreferences({ ...preferences, carpool: event.target.checked })
               }
-            />{" "}
-            Carpool is possible
+            />
+            {text.carpoolPossible}
           </label>
         </fieldset>
-        {props.error && (
+        {issue?.code === "count" && (
           <p className="inline-message" role="alert">
-            {props.error}
+            {text.issueCount}
           </p>
         )}
-        <button
-          className="button primary"
-          type="submit"
-          disabled={props.extracting}
-        >
-          Compare plans
+        <button className="button primary" type="submit" disabled={extracting}>
+          {text.compare}
         </button>
       </form>
     </section>

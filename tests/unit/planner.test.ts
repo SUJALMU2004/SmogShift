@@ -1,11 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { aqiBand, type Forecast } from "../../src/domain/air";
 import { buildPlan } from "../../src/domain/planner";
-import {
-  confirmTasks,
-  exampleTasks,
-  type Task,
-} from "../../src/domain/routine";
+import { exampleTasks, reviewTasks, type Task } from "../../src/domain/routine";
 import { sampleForecast } from "../../src/domain/sample";
 
 const normal = { sensitive: false, carpool: false };
@@ -16,6 +12,7 @@ const walk: Task = {
   duration: 60,
   fixed: false,
   travel: "unspecified",
+  indoorAvailable: true,
 };
 
 function outlook(values: Record<number, number | null>): Forecast {
@@ -56,7 +53,9 @@ describe("US AQI bands", () => {
 
 describe("planning decisions", () => {
   it("recalculates only the conditional trip when the carpool is unavailable", () => {
-    const tasks = confirmTasks(exampleTasks);
+    const reviewed = reviewTasks(exampleTasks);
+    if (!reviewed.ok) throw new Error("Invalid example");
+    const tasks = reviewed.tasks;
     const forecast = sampleForecast("delhi");
     const withCarpool = buildPlan(tasks, forecast, {
       ...normal,
@@ -64,12 +63,12 @@ describe("planning decisions", () => {
     });
     const withoutCarpool = buildPlan(tasks, forecast, normal);
     expect(withCarpool.impact).toEqual({
-      outdoorMinutesAvoided: 30,
+      outdoorMinutesAvoided: 0,
       conditionalRoundTrips: 1,
       sourcesRemoved: 1,
     });
     expect(withoutCarpool.impact).toEqual({
-      outdoorMinutesAvoided: 30,
+      outdoorMinutesAvoided: 0,
       conditionalRoundTrips: 0,
       sourcesRemoved: 1,
     });
@@ -94,7 +93,12 @@ describe("planning decisions", () => {
       time: "11:00",
       outdoorMinutesAvoided: 0,
     });
-    expect(result.decisions[0].reason).toContain("220 to 80");
+    expect(result.decisions[0].reason).toEqual({
+      code: "move",
+      peak: 220,
+      newPeak: 80,
+      cutoff: 151,
+    });
   });
 
   it("avoids a collision with a locked commitment", () => {
@@ -134,16 +138,26 @@ describe("planning decisions", () => {
         .kind,
     ).toBe("indoors");
     expect(
-      buildPlan([{ ...walk, fixed: true }], forecast, {
+      buildPlan([{ ...walk, fixed: true, indoorAvailable: false }], forecast, {
         ...normal,
         sensitive: true,
       }).decisions[0],
     ).toMatchObject({ kind: "kept", time: "07:30" });
+    expect(
+      buildPlan([{ ...walk, fixed: true }], forecast, {
+        ...normal,
+        sensitive: true,
+      }).decisions[0],
+    ).toMatchObject({
+      kind: "indoors",
+      time: "07:30",
+      reason: { code: "lockedIndoor" },
+    });
   });
 
   it("preserves an outdoor activity when the forecast coverage is missing", () => {
     const result = buildPlan([walk], outlook({ 7: 300 }), normal);
-    expect(result.decisions[0].reason).toContain("incomplete");
+    expect(result.decisions[0].reason).toEqual({ code: "unknown" });
     expect(result.impact.outdoorMinutesAvoided).toBe(0);
   });
 
@@ -180,13 +194,121 @@ describe("planning decisions", () => {
   });
 
   it("rejects incomplete drafts, malformed times and activities across midnight", () => {
-    expect(() => confirmTasks([{ ...walk, time: null }])).toThrow("Activity 1");
-    expect(() => confirmTasks([{ ...walk, time: "27:00" }])).toThrow(
-      "Activity 1",
+    for (const time of [null, "27:00", "23:30"]) {
+      expect(reviewTasks([{ ...walk, time }])).toEqual({
+        ok: false,
+        issue: { code: "activity", index: 0 },
+      });
+    }
+    expect(reviewTasks([{ ...walk, time: "23:00" }]).ok).toBe(true);
+  });
+
+  it("rejects an impossible move window and overlapping baseline tasks", () => {
+    expect(
+      reviewTasks([{ ...walk, earliestStart: "10:00", latestEnd: "10:30" }]),
+    ).toMatchObject({
+      issue: { code: "window", index: 0 },
+    });
+    expect(
+      reviewTasks([walk, { ...walk, id: "second", time: "08:00" }]),
+    ).toMatchObject({
+      issue: { code: "conflict", index: 1 },
+    });
+    expect(
+      reviewTasks([walk, { ...walk, id: "second", time: "08:30" }]).ok,
+    ).toBe(true);
+  });
+
+  it("preserves a required activity with no eligible slot", () => {
+    const errand: Task = {
+      ...walk,
+      kind: "outdoor_errand",
+      required: true,
+      earliestStart: "08:00",
+      latestEnd: "09:00",
+    };
+    const result = buildPlan(
+      [errand],
+      outlook({ 7: 260, 8: 180, 9: 20 }),
+      normal,
     );
-    expect(() => confirmTasks([{ ...walk, time: "23:30" }])).toThrow(
-      "ending by midnight",
+    expect(result.decisions[0]).toMatchObject({
+      kind: "review",
+      time: "07:30",
+      reason: { code: "requiredReview", peak: 260 },
+    });
+    expect(result.impact.outdoorMinutesAvoided).toBe(0);
+  });
+
+  it("uses the activity sensitivity override and its available indoor fallback", () => {
+    const activity = {
+      ...walk,
+      duration: 30,
+      earliestStart: "10:00",
+      latestEnd: "11:00",
+    };
+    const forecast = outlook({ 7: 210, 10: 120, 11: 60 });
+    expect(buildPlan([activity], forecast, normal).decisions[0]).toMatchObject({
+      kind: "moved",
+      time: "10:00",
+    });
+    expect(
+      buildPlan([{ ...activity, sensitivity: "sensitive" }], forecast, normal)
+        .decisions[0],
+    ).toMatchObject({
+      kind: "indoors",
+      time: "07:30",
+      outdoorMinutesAvoided: 30,
+    });
+    expect(
+      buildPlan([{ ...activity, sensitivity: "general" }], forecast, {
+        ...normal,
+        sensitive: true,
+      }).decisions[0].kind,
+    ).toBe("moved");
+    expect(
+      buildPlan(
+        [{ ...activity, sensitivity: "sensitive", indoorAvailable: false }],
+        forecast,
+        normal,
+      ).decisions[0].kind,
+    ).toBe("deferred");
+  });
+
+  it("lets a required task take the only eligible start without overlapping another proposal", () => {
+    const optional = {
+      ...walk,
+      duration: 30,
+      earliestStart: "10:17",
+      latestEnd: "10:47",
+    };
+    const required: Task = {
+      ...optional,
+      id: "required",
+      kind: "outdoor_errand",
+      required: true,
+      time: "08:30",
+    };
+    const result = buildPlan(
+      [optional, required],
+      outlook({ 7: 210, 8: 200, 10: 90 }),
+      normal,
     );
-    expect(confirmTasks([{ ...walk, time: "23:00" }])).toHaveLength(1);
+    expect(result.decisions[0]).toMatchObject({ kind: "indoors" });
+    expect(result.decisions[1]).toMatchObject({ kind: "moved", time: "10:17" });
+  });
+
+  it("preserves a school pickup even if extraction fails to flag it as fixed or required", () => {
+    const pickup: Task = {
+      ...walk,
+      kind: "school_pickup",
+      fixed: false,
+      required: false,
+      travel: "car",
+    };
+    expect(buildPlan([pickup], null, normal).decisions[0]).toMatchObject({
+      kind: "kept",
+      time: pickup.time,
+    });
   });
 });

@@ -2,45 +2,42 @@
 
 import { ArrowUpRight, RotateCcw, Wind } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
-import { type CityId } from "../domain/air";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { CityId } from "../domain/air";
 import { buildPlan } from "../domain/planner";
 import {
-  confirmTasks,
-  exampleRoutine,
+  exampleRoutines,
   exampleTasks,
-  extractionSchema,
   maxTasks,
+  reviewTasks,
   type EditableTask,
   type Preferences,
-  type Task,
 } from "../domain/routine";
 import { sampleForecast } from "../domain/sample";
+import { messages, type Locale } from "../i18n/messages";
 import { ForecastPanel } from "./forecast-panel";
 import { PlanComparison } from "./plan-comparison";
 import { RoutineEditor } from "./routine-editor";
 import { useRegionalForecast } from "./use-regional-forecast";
+import { useRoutineExtraction } from "./use-routine-extraction";
 
-const samplePreferences = { sensitive: false, carpool: true };
+const samplePreferences: Preferences = { sensitive: false, carpool: true };
 
 export function Planner() {
+  const [locale, setLocale] = useState<Locale>("en");
+  const text = messages[locale];
   const [city, setCity] = useState<CityId>("delhi");
   const [sample, setSample] = useState(true);
   const [revision, setRevision] = useState(0);
-  const [routine, setRoutine] = useState(exampleRoutine);
+  const [routine, setRoutine] = useState(exampleRoutines.en);
   const [drafts, setDrafts] = useState<EditableTask[]>([...exampleTasks]);
-  const [confirmed, setConfirmed] = useState<Task[] | null>(() =>
-    confirmTasks(exampleTasks),
-  );
-  const [preferences, setPreferences] =
-    useState<Preferences>(samplePreferences);
-  const [extracting, setExtracting] = useState(false);
-  const [aiStatus, setAiStatus] = useState("");
-  const [error, setError] = useState("");
-  const extraction = useRef<AbortController | null>(null);
+  const [confirmed, setConfirmed] = useState(true);
+  const [preferences, setPreferences] = useState(samplePreferences);
+  const assistant = useRoutineExtraction(text);
   const sequence = useRef(0);
   const regional = useRegionalForecast(city, !sample, revision);
-  const forecast = sample ? sampleForecast(city) : regional.forecast;
+  const exampleForecast = useMemo(() => sampleForecast(city), [city]);
+  const forecast = sample ? exampleForecast : regional.forecast;
   const forecastStatus = sample
     ? "sample"
     : regional.loading
@@ -48,28 +45,53 @@ export function Planner() {
       : forecast
         ? "ready"
         : "unavailable";
-  const plan =
-    confirmed && !regional.loading
-      ? buildPlan(confirmed, forecast, preferences)
-      : null;
+  const reviewed = useMemo(() => reviewTasks(drafts), [drafts]);
+  const plan = useMemo(
+    () =>
+      confirmed && reviewed.ok && !regional.loading
+        ? buildPlan(reviewed.tasks, forecast, preferences)
+        : null,
+    [confirmed, reviewed, regional.loading, forecast, preferences],
+  );
 
-  useEffect(() => () => extraction.current?.abort(), []);
+  useEffect(() => {
+    document.documentElement.lang = locale;
+  }, [locale]);
 
-  function updateDrafts(update: (current: EditableTask[]) => EditableTask[]) {
-    extraction.current?.abort();
-    setExtracting(false);
-    setAiStatus("");
-    setError("");
-    setConfirmed(null);
+  function switchLocale(next: Locale) {
+    if (routine === exampleRoutines[locale]) setRoutine(exampleRoutines[next]);
+    setLocale(next);
+  }
+
+  function updateDrafts(
+    update: (current: EditableTask[]) => EditableTask[],
+    needsReview = true,
+  ) {
+    assistant.reset();
+    if (needsReview) setConfirmed(false);
     setDrafts(update);
+  }
+
+  function edit(
+    id: string,
+    changes: Partial<EditableTask>,
+    needsReview: boolean,
+  ) {
+    updateDrafts(
+      (current) =>
+        current.map((item) =>
+          item.id === id ? { ...item, ...changes } : item,
+        ),
+      needsReview,
+    );
   }
 
   function resetExample() {
     updateDrafts(() => [...exampleTasks]);
-    setRoutine(exampleRoutine);
+    setRoutine(exampleRoutines[locale]);
     setPreferences(samplePreferences);
     setSample(true);
-    setConfirmed(confirmTasks(exampleTasks));
+    setConfirmed(true);
   }
 
   function useRegional() {
@@ -78,7 +100,7 @@ export function Planner() {
     setRevision((value) => value + 1);
   }
 
-  function onCity(next: CityId) {
+  function selectCity(next: CityId) {
     setCity(next);
     setRevision((value) => value + 1);
   }
@@ -88,96 +110,90 @@ export function Planner() {
     return `task-${sequence.current}`;
   }
 
-  function confirm() {
-    try {
-      setConfirmed(confirmTasks(drafts));
-      setError("");
-    } catch (reason) {
-      setError(
-        reason instanceof Error ? reason.message : "Review your activities.",
-      );
-      setConfirmed(null);
-    }
+  function addTask() {
+    if (drafts.length >= maxTasks) return;
+    const id = nextId();
+    updateDrafts((current) => [
+      ...current,
+      {
+        id,
+        kind: "other",
+        time: null,
+        duration: null,
+        fixed: true,
+        travel: "unspecified",
+      },
+    ]);
   }
 
-  async function extractRoutine() {
-    extraction.current?.abort();
-    const controller = new AbortController();
-    extraction.current = controller;
-    setExtracting(true);
-    setAiStatus("");
-    setError("");
-    try {
-      const response = await fetch("/api/routine", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ routine: routine.trim() }),
-        signal: controller.signal,
-      });
-      const body = await response.json();
-      if (!response.ok)
-        throw new Error(body.error || "Unable to extract activities.");
-      const result = extractionSchema.parse(body);
-      if (!result.tasks.length)
-        throw new Error("No activities were extracted.");
-      if (controller.signal.aborted) return;
-      setDrafts(result.tasks.map((task) => ({ ...task, id: nextId() })));
-      setConfirmed(null);
-      setAiStatus("Activities extracted. Review and compare your plans.");
-    } catch (reason) {
-      if (!controller.signal.aborted) {
-        setAiStatus(
-          `Error: ${reason instanceof Error ? reason.message : "Unable to extract activities. Use the editor below."}`,
-        );
-      }
-    } finally {
-      if (extraction.current === controller) {
-        extraction.current = null;
-        setExtracting(false);
-      }
-    }
+  function extractRoutine() {
+    void assistant.extract(routine, (tasks) => {
+      const activities = tasks.map((task) => ({
+        ...task,
+        id: nextId(),
+      }));
+      setDrafts(activities);
+      setConfirmed(false);
+      return reviewTasks(activities).ok;
+    });
   }
 
   return (
     <>
       <a className="skip-link" href="#content">
-        Skip to planner
+        {text.skip}
       </a>
       <header className="masthead">
         <div className="site-width masthead-inner">
-          <Link className="brand" href="/" aria-label="SmogShift home">
+          <Link className="brand" href="/" aria-label={text.home}>
             <span>
               <Wind size={23} aria-hidden />
             </span>
             SmogShift
           </Link>
-          <span className="header-context">Delhi-NCR air planner</span>
+          <div className="masthead-actions">
+            <span className="header-context">{text.header}</span>
+            <label className="language-field">
+              <span className="sr-only">{text.language}</span>
+              <select
+                value={locale}
+                onChange={(event) =>
+                  switchLocale(event.target.value === "hi" ? "hi" : "en")
+                }
+              >
+                <option value="en" lang="en">
+                  English
+                </option>
+                <option value="hi" lang="hi">
+                  हिन्दी
+                </option>
+              </select>
+            </label>
+          </div>
         </div>
       </header>
       <main className="site-width" id="content" tabIndex={-1}>
         <div className="intro">
           <div>
-            <h1>Plan around the smog.</h1>
-            <p>
-              Build a day with fewer high-pollution minutes and fewer
-              unnecessary car trips.
-            </p>
+            <h1>{text.intro}</h1>
+            <p>{text.introBody}</p>
           </div>
           <button
             className="button secondary example-button"
             type="button"
             onClick={resetExample}
           >
-            <RotateCcw size={17} aria-hidden /> Load example routine
+            <RotateCcw size={17} aria-hidden /> {text.loadExample}
           </button>
         </div>
         <ForecastPanel
           city={city}
           forecast={forecast}
           loading={regional.loading}
-          error={regional.error}
+          error={Boolean(regional.error)}
           sample={sample}
-          onCity={onCity}
+          locale={locale}
+          onCity={selectCity}
           onRegional={useRegional}
           onSample={() => setSample(true)}
         />
@@ -187,61 +203,49 @@ export function Planner() {
             type="button"
             onClick={() => setSample(true)}
           >
-            Use sample forecast
+            {text.useSample}
           </button>
         )}
         <div className="planner-grid">
           <RoutineEditor
+            text={text}
             routine={routine}
             drafts={drafts}
             preferences={preferences}
-            extracting={extracting}
-            aiStatus={aiStatus}
-            error={error}
-            onRoutine={setRoutine}
-            onExtract={() => {
-              void extractRoutine();
-            }}
-            onEdit={(id, changes) =>
-              updateDrafts((current) =>
-                current.map((item) =>
-                  item.id === id ? { ...item, ...changes } : item,
-                ),
-              )
+            extracting={assistant.extracting}
+            aiStatus={assistant.status}
+            issue={
+              (confirmed || assistant.needsReview) && !reviewed.ok
+                ? reviewed.issue
+                : null
             }
-            onAdd={() => {
-              if (drafts.length >= maxTasks) return;
-              const id = nextId();
-              updateDrafts((current) => [
-                ...current,
-                {
-                  id,
-                  kind: "other",
-                  time: null,
-                  duration: null,
-                  fixed: true,
-                  travel: "unspecified",
-                },
-              ]);
-            }}
+            onRoutine={setRoutine}
+            onExtract={extractRoutine}
+            onEdit={(id, changes) => edit(id, changes, true)}
+            onAdjust={(id, changes) => edit(id, changes, false)}
+            onAdd={addTask}
             onRemove={(id) =>
               updateDrafts((current) =>
                 current.filter((task) => task.id !== id),
               )
             }
             onPreferences={setPreferences}
-            onConfirm={confirm}
+            onConfirm={() => setConfirmed(true)}
           />
-          <PlanComparison plan={plan} forecastStatus={forecastStatus} />
+          <PlanComparison
+            plan={plan}
+            forecastStatus={forecastStatus}
+            text={text}
+          />
         </div>
       </main>
       <footer className="site-width footer">
-        <span>Air-quality planning for households in Delhi-NCR</span>
+        <span>{text.footer}</span>
         <a href="https://ews.tropmet.res.in/">
-          Official Delhi air bulletin <ArrowUpRight size={14} aria-hidden />
+          {text.official} <ArrowUpRight size={14} aria-hidden />
         </a>
         <a href="https://ncdc.mohfw.gov.in/uploads/pdf/air7.pdf">
-          India NCDC guidance <ArrowUpRight size={14} aria-hidden />
+          {text.guidance} <ArrowUpRight size={14} aria-hidden />
         </a>
       </footer>
     </>

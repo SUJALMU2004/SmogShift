@@ -1,8 +1,9 @@
 import type { AirHour, CityId, Forecast } from "./air";
 
+// Fictional demo: the 10:00 window is below 151 but above 100.
 const sampleAqi = [
-  239, 241, 247, 264, 272, 291, 312, 325, 311, 280, 227, 195, 174, 166, 158,
-  164, 172, 185, 208, 231, 248, 251, 244, 240,
+  180, 183, 186, 191, 195, 200, 205, 210, 193, 165, 120, 115, 108, 112, 130,
+  148, 163, 177, 194, 207, 217, 223, 217, 210,
 ];
 
 export function sampleForecast(city: CityId): Forecast {

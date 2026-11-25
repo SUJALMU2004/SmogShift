@@ -11,32 +11,35 @@ npm ci
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). The initial screen uses an explicitly labeled fictional smog day so a reviewer can try the flow without credentials.
+Open [http://localhost:3000](http://localhost:3000). The initial screen uses a labeled fictional forecast and a ready-to-try schedule.
 
-1. Review the example routine or add and edit activities. Use **Compare plans** to confirm edits.
-2. Change **Carpool is possible** and check that the pickup time stays fixed while the conditional trip saving changes.
-3. Select a city and choose **Regional forecast** for tomorrow in India Standard Time. If the provider is unavailable, the app offers the sample forecast explicitly.
-4. To try natural-language extraction, copy `.env.example` to `.env.local`, fill in a Google AI Studio API key, and restart the server. Open **Extract activities with Gemini**, use the fictional or generic sample text, and review the extracted tasks. The editor works without a key.
+1. Look at the 7 AM walk. It moves to 10 AM, within the allowed window, where the forecast peak is 120 instead of 210 US AQI.
+2. Open the walk’s **Activity options** and change **Air sensitivity for this activity** to **Sensitive**. With indoor exercise available, the plan switches the walk indoors and shows 30 fewer planned outdoor minutes. The school pickup stays at 3 PM.
+3. Turn off **Carpool is possible** to see the conditional trip saving go to zero. Switch the display to **हिन्दी** to see the same plan in Hindi.
+4. Choose **Regional forecast** to use tomorrow’s actual regional forecast in India Standard Time. If the provider is unavailable, the app offers the fictional sample explicitly.
+5. To try natural-language extraction, copy `.env.example` to `.env.local`, set a Google AI Studio key, and restart the server. Open **Extract activities with Gemini**, enter a generic routine in English, Hindi, or Hinglish, and review the extracted tasks. The manual editor works without a key.
 
-| Server environment variable | Purpose                                                                                                        |
-| --------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `GEMINI_API_KEY`            | Optional at startup. Enables Gemini routine extraction. Keep it in `.env.local` or the deployment environment. |
-| `GEMINI_MODEL`              | Defaults to `gemini-4-hydrogen`. Any override must support structured output on the Interactions API.          |
+| Server environment variable | Purpose                                                                                                       |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `GEMINI_API_KEY`            | Optional at startup. Enables Gemini routine extraction. Set it in `.env.local` or the deployment environment. |
+| `GEMINI_MODEL`              | Defaults to `gemini-4-hydrogen`. An override must support structured output on the Interactions API.          |
 
-## How it works
+## Architecture
 
-- `src/app/api/forecast/route.ts` serves one of three allowlisted regional forecasts. `src/server/open-meteo.ts` normalizes the upstream response, caches it per city for 15 minutes, and deduplicates simultaneous requests.
-- `src/app/api/routine/route.ts` handles extraction. The Gemini call is in `src/server/gemini.ts` via the **Gemini Interactions REST API**, pinned to the documented API revision. The response is limited to validated task fields, including activity type, start, duration, flexibility, and travel mode. The app requests structured JSON and asks the user to confirm ambiguous details.
-- `src/domain/planner.ts` recalculates suggestions locally from confirmed tasks, the forecast, and household constraints. It preserves fixed commitments, checks every hour an activity spans, filters out overlapping options, and searches same-day alternatives within four hours of the original start. The UI comparison comes from the resulting decisions and calculations.
-- `src/components/` contains the regional outlook, routine editor, and plan comparison. The hourly table gives keyboard and screen-reader users the values shown in the chart.
+- `src/app/api/forecast/route.ts` serves one of three allowlisted regional forecasts. `src/server/open-meteo.ts` normalizes the upstream response, caches by city for 15 minutes, and deduplicates simultaneous requests. The client cancels stale requests when the city changes.
+- `src/app/api/routine/route.ts` handles extraction. The only Gemini call is in `src/server/gemini.ts` via the **Gemini Interactions REST API**. Gemini extracts structured tasks and any stated move constraints. The output schema and the app validate activity types, times, durations, required status, and allowed move windows. Missing or ambiguous start times and durations need confirmation.
+- `src/domain/routine.ts` validates a single baseline schedule. `src/domain/planner.ts` builds a comparison from confirmed activities, the forecast, and local constraints. The decision contains a typed reason and the values used to explain it. The UI renders bilingual explanations from `src/i18n/messages.ts`.
+- `src/components/` separates the editor, individual activity controls, forecast, comparison, and request hooks. Activity options and household changes replan locally after confirmation. The chart has an equivalent hourly table, and plan updates are announced to screen readers.
 
-## Assumptions and limits
+## Planning rules and assumptions
 
-- Phase 1 covers a single schedule and tomorrow’s regional forecast for Delhi, Noida, or Gurugram. Open-Meteo uses the CAMS global grid at roughly 45 km coverage. The card displays forecast values on the **US AQI scale** and links to the official Delhi bulletin for local context. Missing or misaligned readings appear as unavailable.
-- The planner uses conservative thresholds for offering activity changes, US AQI 151 for general households and 101 when the sensitivity option is selected. These are app rules informed by the health bands. The app can suggest indoor exercise or postponement when a flexible activity has no acceptable alternative. Household sensitivities stay in the local planner.
-- Fewer outdoor minutes are scheduled minutes moved indoors or deferred for the plan day. They are neither a measured dose nor an estimate of indoor air. At most one conditional round trip is counted and only if a shared pickup replaces another drive. Damp mopping and skipping incense address an indoor source without claiming a concentration reduction.
-- Gemini receives the optional routine text only. Use generic activities and avoid personal information under Google’s free-tier terms. Requests are bounded, checked for cross-site browser traffic, and rate-limited to five upstream calls per minute per server process. The short bounded cache holds only a digest and structured activity fields. Quota and throttling are local to a process, so multi-instance hosting would require platform-level controls for a shared limit.
-- Open-Meteo’s open-access API is used for this non-commercial prototype. [Open-Meteo / CAMS data and attribution](https://open-meteo.com/en/docs/air-quality-api) · [US AQI health bands](https://www.airnow.gov/aqi/aqi-basics/) · [Particle pollution activity guidance](https://document.airnow.gov/air-quality-guide-for-particle-pollution.pdf) · [India NCDC indoor and outdoor guidance](https://ncdc.mohfw.gov.in/uploads/pdf/air7.pdf) · [IITM Delhi bulletin](https://ews.tropmet.res.in/) · [Gemini free-tier terms](https://aistudio.google.com/docs/terms#data-use-unpaid)
+- The app plans one schedule for tomorrow. Overlapping baseline activities need review. A fixed time stays fixed. A required activity stays in the plan and can move if its time is flexible. If no eligible slot exists, the app offers an available indoor exercise option, defers an optional flexible activity, or keeps a required activity visible for review.
+- The app checks every hourly value in a block. It uses US AQI planning cutoffs of 151 for the general setting and 101 for the sensitive setting. These cutoffs determine when to suggest a change. With full forecast coverage, candidates must stay below the applicable cutoff, fit the supplied window, and avoid overlaps. The planner considers required tasks first and ranks eligible starts by lowest peak forecast AQI, then smallest time change. With both bounds blank, it looks up to four hours from the original start during 06:00–21:00. If a user enters only one bound, the other defaults to the start or end of the forecast day.
+- The Open-Meteo feed uses the CAMS global model, at approximately 45 km spatial and three-hour native temporal resolution, with hourly values exposed by the API. These are regional estimates on the **US AQI scale**. The app also shows PM₂.₅, PM₁₀, NO₂, and O₃ when present and links to the official Delhi bulletin. Missing hours cannot qualify a proposed time.
+- Fewer outdoor minutes count planned minutes moved indoors or deferred. Time shifts keep the original duration and show the change in forecast AQI. Neither metric measures a person’s exposure or indoor air quality. Carpool savings are conditional on replacing a separate drive. Damp mopping and skipping incense address indoor sources without estimating a pollutant reduction.
+- Gemini receives optional routine text, with no weather data, household settings, or account information added by the application. Enter generic activities and omit personal information under Google’s free-tier terms. The endpoint has an input cap, same-origin browser checks, strict output validation, no model tool access, and a limit of five upstream requests per minute per server process. Its bounded cache keeps a digest and structured activities for five minutes. The limit is process-local and would need shared controls for multi-instance hosting.
+
+[Open-Meteo / CAMS forecast and attribution](https://open-meteo.com/en/docs/air-quality-api) · [US AQI bands](https://www.airnow.gov/aqi/aqi-basics/) · [AirNow activity guidance](https://document.airnow.gov/air-quality-guide-for-particle-pollution.pdf) · [India NCDC air pollution guidance](https://ncdc.mohfw.gov.in/uploads/pdf/air7.pdf) · [IITM Delhi bulletin](https://ews.tropmet.res.in/) · [Google free-tier terms](https://aistudio.google.com/docs/terms#data-use-unpaid)
 
 ## Verify
 
@@ -50,4 +53,6 @@ npm run build
 npm run test:e2e
 ```
 
-The unit suite covers AQI band boundaries, severe and incomplete air data, fixed times, overlapping alternatives, travel constraints, API validation, provider timeouts, caching, and AI rate limiting. Playwright tests cover the full comparison with mocked providers, the no-key fallback through the real route, keyboard navigation, mobile layout, and automated accessibility checks. These checks do not require external API keys.
+These checks work without API keys. Vitest covers scheduling, AQI edge cases, malformed inputs, caching, timeouts, and throttling. Thirty fictional routines (ten per language) test the extraction contract and whether the expected task drafts require confirmation with a mocked provider. Playwright covers the full forecast-to-plan flow, local replanning, Hindi review, request cancellation, the missing-key fallback, and mobile accessibility.
+
+Use `npm run test:gemini` with `GEMINI_API_KEY` available in the environment or `.env.local` to run one live extraction smoke case each for English, Hindi, and Hinglish. That test is separate from the offline suite.

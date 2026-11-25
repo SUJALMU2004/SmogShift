@@ -7,33 +7,29 @@ import {
   LockKeyhole,
   Wind,
 } from "lucide-react";
-import { activities } from "../domain/routine";
-import type { buildPlan, Decision } from "../domain/planner";
-
-const decisionLabel: Record<Decision["kind"], string> = {
-  kept: "Keep",
-  moved: "Reschedule",
-  indoors: "Move indoors",
-  deferred: "Defer",
-  carpool: "Possible carpool",
-  source: "Indoor air",
-};
+import type { buildPlan } from "../domain/planner";
+import { isFixed } from "../domain/routine";
+import type { Messages } from "../i18n/messages";
+import { decisionCopy } from "./decision-copy";
 
 type Props = {
   plan: ReturnType<typeof buildPlan> | null;
   forecastStatus: "sample" | "loading" | "ready" | "unavailable";
+  text: Messages;
 };
 
-const forecastDescriptions: Record<Props["forecastStatus"], string> = {
-  sample: "Suggestions for the fictional forecast.",
-  loading: "Loading tomorrow’s regional forecast.",
-  ready: "Suggestions for tomorrow’s regional forecast.",
-  unavailable: "Forecast unavailable. Indoor and trip suggestions still apply.",
-};
+export function PlanComparison({ plan, forecastStatus, text }: Props) {
+  const forecastDescriptions = {
+    sample: text.comparisonSample,
+    loading: text.comparisonLoading,
+    ready: text.comparisonReady,
+    unavailable: text.comparisonUnavailable,
+  };
+  const status = plan?.impact;
+  const changes = plan?.decisions.filter(
+    ({ kind, reason }) => kind !== "kept" || reason.code === "lockedHigh",
+  );
 
-export function PlanComparison({ plan, forecastStatus }: Props) {
-  const { outdoorMinutesAvoided, conditionalRoundTrips, sourcesRemoved } =
-    plan?.impact ?? {};
   return (
     <section className="card comparison" aria-labelledby="comparison-heading">
       <div className="card-heading">
@@ -41,100 +37,110 @@ export function PlanComparison({ plan, forecastStatus }: Props) {
           <CalendarCheck size={20} aria-hidden />
         </span>
         <div>
-          <h2 id="comparison-heading">Plan comparison</h2>
+          <h2 id="comparison-heading">{text.comparison}</h2>
           <p>{forecastDescriptions[forecastStatus]}</p>
         </div>
       </div>
       <p className="sr-only" aria-live="polite" aria-atomic="true">
-        {plan
-          ? `Plan updated. ${outdoorMinutesAvoided} fewer planned outdoor minutes, ${conditionalRoundTrips} conditional car round trips avoided, ${sourcesRemoved} indoor smoke or dust sources addressed.`
-          : ""}
+        {status && (
+          <>
+            {text.planStatus(
+              status.outdoorMinutesAvoided,
+              status.conditionalRoundTrips,
+              status.sourcesRemoved,
+            )}{" "}
+            {changes
+              ?.map(
+                (change) =>
+                  `${decisionCopy(change, text).title}${change.time ? ` ${change.time}` : ""}`,
+              )
+              .join(". ")}
+          </>
+        )}
       </p>
       {plan ? (
         <>
           <dl className="impact">
             <div>
               <dt>
-                <Wind size={17} aria-hidden /> Fewer outdoor minutes
+                <Wind size={17} aria-hidden /> {text.fewerMinutes}
               </dt>
-              <dd>{outdoorMinutesAvoided}</dd>
+              <dd>{plan.impact.outdoorMinutesAvoided}</dd>
             </div>
             <div>
               <dt>
-                <CarFront size={17} aria-hidden /> Round trips avoided if shared
+                <CarFront size={17} aria-hidden /> {text.sharedTrips}
               </dt>
-              <dd>{conditionalRoundTrips}</dd>
+              <dd>{plan.impact.conditionalRoundTrips}</dd>
             </div>
             <div>
               <dt>
-                <House size={17} aria-hidden /> Indoor sources addressed
+                <House size={17} aria-hidden /> {text.indoorSources}
               </dt>
-              <dd>{sourcesRemoved}</dd>
+              <dd>{plan.impact.sourcesRemoved}</dd>
             </div>
           </dl>
           <p className="column-labels" aria-hidden="true">
-            <span>Original</span>
-            <span>Suggested</span>
+            <span>{text.original}</span>
+            <span>{text.suggested}</span>
           </p>
           <ol className="decisions">
-            {plan.decisions.map((decision) => (
-              <li className="decision" key={decision.original.id}>
-                <div className="decision-top">
-                  <div className="decision-before">
-                    <span className="sr-only">Original activity</span>
-                    <time dateTime={decision.original.time}>
-                      {decision.original.time}
-                    </time>
-                    <strong>{activities[decision.original.kind]}</strong>
-                    <span>
-                      {decision.original.duration} min{" "}
-                      {decision.original.fixed ||
-                      decision.original.kind === "school_pickup" ? (
-                        <LockKeyhole size={12} aria-label="Fixed" />
-                      ) : null}
-                    </span>
+            {plan.decisions.map((decision) => {
+              const copy = decisionCopy(decision, text);
+              return (
+                <li className="decision" key={decision.original.id}>
+                  <div className="decision-top">
+                    <div className="decision-before">
+                      <span className="sr-only">{text.originalActivity}</span>
+                      <time dateTime={decision.original.time}>
+                        {decision.original.time}
+                      </time>
+                      <strong>{text.activities[decision.original.kind]}</strong>
+                      <span>
+                        {decision.original.duration} {text.minuteUnit}{" "}
+                        {isFixed(decision.original) && (
+                          <LockKeyhole
+                            size={12}
+                            role="img"
+                            aria-label={text.fixedIndicator}
+                          />
+                        )}
+                      </span>
+                    </div>
+                    <ArrowRight
+                      className="decision-arrow horizontal"
+                      size={16}
+                      aria-hidden
+                    />
+                    <ArrowDown
+                      className="decision-arrow vertical"
+                      size={16}
+                      aria-hidden
+                    />
+                    <div className="decision-after">
+                      <span className="sr-only">{text.suggestedActivity}</span>
+                      <span className={`decision-tag ${decision.kind}`}>
+                        {copy.tag}
+                        {decision.time ? ` · ${decision.time}` : ""}
+                      </span>
+                      <strong>{copy.title}</strong>
+                    </div>
                   </div>
-                  <ArrowRight
-                    className="decision-arrow horizontal"
-                    size={16}
-                    aria-hidden
-                  />
-                  <ArrowDown
-                    className="decision-arrow vertical"
-                    size={16}
-                    aria-hidden
-                  />
-                  <div className="decision-after">
-                    <span className="sr-only">Suggested activity</span>
-                    <span
-                      className={`decision-tag ${decision.kind === "kept" ? "kept" : ""}`}
-                    >
-                      {decisionLabel[decision.kind]}
-                      {decision.time ? ` · ${decision.time}` : ""}
-                    </span>
-                    <strong>{decision.title}</strong>
-                  </div>
-                </div>
-                <p>{decision.reason}</p>
-              </li>
-            ))}
+                  <p>{copy.reason}</p>
+                </li>
+              );
+            })}
           </ol>
-          <p className="subtle metric-note">
-            Outdoor minutes describe changes to your schedule. Trip savings
-            depend on replacing a separate drive.
-          </p>
+          <p className="subtle metric-note">{text.metricNote}</p>
         </>
       ) : (
         <div className="empty-plan">
           <CalendarCheck size={28} aria-hidden />
-          {forecastStatus === "loading" ? (
-            <p>The comparison will update when the forecast arrives.</p>
-          ) : (
-            <p>
-              Choose <strong>Compare plans</strong> after reviewing your
-              activities.
-            </p>
-          )}
+          <p>
+            {forecastStatus === "loading"
+              ? text.waitComparison
+              : text.emptyComparison}
+          </p>
         </div>
       )}
     </section>

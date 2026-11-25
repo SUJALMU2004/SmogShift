@@ -215,6 +215,23 @@ describe("routine API with a mocked Gemini provider", () => {
     expect((await configured(post(input))).status).toBe(429);
   });
 
+  it("rejects model attempts to assign private household options", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () =>
+      providerOutput({
+        tasks: [
+          { ...tasks[0], sensitivity: "sensitive", indoorAvailable: true },
+        ],
+      }),
+    );
+    const handle = createRoutineHandler(
+      createRoutineExtractor(fetcher),
+      () => config,
+    );
+    const response = await handle(post({ routine: "Subah walk karni hai." }));
+    expect(response.status).toBe(502);
+    expect(await response.text()).not.toContain("indoorAvailable");
+  });
+
   it("limits uncached requests per process and lets the window expire", async () => {
     let time = 0;
     const fetcher = vi

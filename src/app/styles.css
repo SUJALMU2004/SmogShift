@@ -822,3 +822,95 @@ textarea,
     display: block;
   }
 }
+
+.masthead-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.language-field select {
+  min-height: 36px;
+  border: 1px solid #b9cabd;
+  border-radius: 8px;
+  padding: 4px 8px;
+  color: var(--ink);
+  background: var(--paper);
+}
+
+.field-note {
+  display: block;
+  margin-top: 3px;
+  color: #7b2824;
+}
+
+.task input[aria-invalid="true"] {
+  border-color: #a84135;
+}
+
+.activity-options {
+  border-top: 1px solid var(--border);
+  margin-top: 7px;
+  padding-top: 4px;
+}
+
+.activity-options summary {
+  min-height: 28px;
+  padding-top: 4px;
+  cursor: pointer;
+  color: var(--green-dark);
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.activity-options summary svg {
+  vertical-align: -3px;
+  margin-inline: 3px;
+}
+
+.option-fields {
+  display: grid;
+  gap: 7px;
+  padding: 4px 2px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.option-fields label:not(.checkbox) {
+  display: grid;
+  justify-items: start;
+  gap: 3px;
+}
+
+.option-fields input:not([type="checkbox"]),
+.option-fields select {
+  max-width: 100%;
+  min-height: 33px;
+}
+
+.window-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 12px;
+}
+
+.decision-tag.review {
+  background: #f8e8c9;
+  color: #654318;
+}
+
+:lang(hi) h1,
+:lang(hi) h2 {
+  letter-spacing: normal;
+  line-height: 1.25;
+}
+
+:lang(hi) .intro h1 {
+  font-size: clamp(31px, 4.6vw, 56px);
+}
+
+@media (max-width: 540px) {
+  .masthead-actions .header-context {
+    display: none;
+  }
+}
