@@ -173,6 +173,7 @@ test("refreshes the regional forecast and invalidates the old proposal at midnig
         ...sampleForecast("delhi"),
         source: "open-meteo",
         date: requests++ === 0 ? "2026-11-26" : "2026-11-27",
+        fetchedAt: new Date().toISOString(),
       },
     }),
   );

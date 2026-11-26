@@ -1,0 +1,283 @@
+.planner-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.04fr);
+  align-items: start;
+  gap: 20px;
+  margin: 22px 0;
+}
+.card {
+  padding: 21px;
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: 15px;
+}
+.card-heading {
+  display: flex;
+  gap: 11px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.section-icon {
+  width: 39px;
+  height: 39px;
+  flex: none;
+  border-radius: 10px;
+  background: var(--tint);
+  color: var(--green);
+  display: grid;
+  place-items: center;
+}
+.card-heading h2 {
+  font-size: 23px;
+}
+.card-heading p {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 2px;
+  line-height: 1.4;
+}
+.ai-entry {
+  padding: 8px 11px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: #f8faf5;
+  margin-bottom: 12px;
+}
+.ai-entry summary {
+  cursor: pointer;
+  font-weight: 660;
+  color: var(--green-dark);
+  min-height: 28px;
+  padding: 3px 0;
+  font-size: 14px;
+}
+.ai-entry summary svg {
+  vertical-align: -3px;
+  margin-inline: 3px;
+}
+.ai-fields {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  margin: 9px 0 3px;
+}
+.ai-fields label {
+  font-weight: 650;
+}
+textarea {
+  resize: vertical;
+  width: 100%;
+  min-height: 85px;
+  line-height: 1.45;
+}
+textarea,
+.task input:not([type="checkbox"]),
+.task select {
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid #b9cabd;
+  border-radius: 7px;
+  padding: 5px 7px;
+}
+.subtle {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.task-list {
+  display: grid;
+  gap: 8px;
+}
+.task {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  min-width: 0;
+  margin: 0;
+  padding: 9px 10px;
+  background: #fcfdfa;
+}
+.task-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.task-kind {
+  flex: 1;
+}
+.task-kind select {
+  width: min(100%, 275px);
+  min-height: 34px;
+  font-weight: 680;
+}
+.icon-button {
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  border-radius: 7px;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+}
+.icon-button:hover {
+  color: #7c302c;
+  background: #f8eeeb;
+}
+.task-fields {
+  display: flex;
+  align-items: end;
+  gap: 7px 10px;
+  flex-wrap: wrap;
+  margin-top: 7px;
+}
+.task-fields label {
+  font-size: 12px;
+  font-weight: 590;
+  color: var(--muted);
+}
+.task-fields input:not([type="checkbox"]),
+.task-fields select {
+  display: block;
+  min-height: 33px;
+  margin-top: 3px;
+}
+.task-fields input[type="number"] {
+  width: 60px;
+}
+.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  font-size: 13px;
+}
+.checkbox input {
+  accent-color: var(--green-dark);
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+.lock {
+  margin-left: auto;
+}
+.text-button {
+  display: inline-flex;
+  min-height: 36px;
+  gap: 5px;
+  align-items: center;
+  color: var(--green-dark);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  padding: 4px 3px;
+  font-weight: 670;
+  font-size: 13px;
+}
+.text-button:hover {
+  text-decoration: underline;
+}
+.preferences {
+  margin: 6px 0 12px;
+  padding: 6px 10px 7px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+.preferences legend {
+  font-size: 13px;
+  font-weight: 700;
+  padding: 0 4px;
+}
+.inline-message {
+  margin: 6px 0 10px;
+  color: #7b2824;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.inline-message.success {
+  color: var(--green-dark);
+}
+
+.field-note {
+  display: block;
+  margin-top: 3px;
+  color: #7b2824;
+}
+
+.task input[aria-invalid="true"] {
+  border-color: #a84135;
+}
+
+.activity-options {
+  border-top: 1px solid var(--border);
+  margin-top: 7px;
+  padding-top: 4px;
+}
+
+.activity-options summary {
+  min-height: 28px;
+  padding-top: 4px;
+  cursor: pointer;
+  color: var(--green-dark);
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.activity-options summary svg {
+  vertical-align: -3px;
+  margin-inline: 3px;
+}
+
+.option-fields {
+  display: grid;
+  gap: 7px;
+  padding: 4px 2px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.option-fields label:not(.checkbox) {
+  display: grid;
+  justify-items: start;
+  gap: 3px;
+}
+
+.option-fields input:not([type="checkbox"]),
+.option-fields select {
+  max-width: 100%;
+  min-height: 33px;
+}
+
+.window-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 12px;
+}
+
+.editor-actions,
+.share-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.editor-actions a,
+.share-actions a {
+  text-decoration: none;
+}
+
+@media (max-width: 855px) {
+  .card {
+    padding: 15px;
+  }
+  .lock {
+    margin-left: 0;
+  }
+}
+@media (max-width: 680px) {
+  .planner-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+    margin-top: 15px;
+  }
+}

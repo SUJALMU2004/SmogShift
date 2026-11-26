@@ -1,11 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { createForecastHandler } from "../../src/server/forecast-handler";
-import {
-  createForecastService,
-  normalizeForecast,
-} from "../../src/server/open-meteo";
-import { createRoutineExtractor, defaultModel } from "../../src/server/gemini";
+import { createForecastService } from "../../src/server/forecast-service";
+import { defaultModel } from "../../src/server/gemini";
+import { normalizeForecast } from "../../src/server/open-meteo";
 import { createRoutineHandler } from "../../src/server/routine-handler";
+import { createRoutineExtractor } from "../../src/server/routine-service";
 
 const now = new Date("2026-01-01T19:00:00Z");
 const fixture = {
@@ -84,7 +83,7 @@ describe("forecast API with a mocked provider", () => {
     ]);
     expect(results.map((response) => response.status)).toEqual([200, 200]);
     expect(fetcher).toHaveBeenCalledTimes(1);
-    const url = new URL(String(fetcher.mock.calls[0][0]));
+    const url = new URL(String(fetcher.mock.calls[0]?.[0]));
     expect(url.searchParams.get("start_date")).toBe("2026-01-03");
     expect(url.searchParams.get("end_date")).toBe("2026-01-03");
     await get(forecastRequest("delhi"));
@@ -113,6 +112,28 @@ describe("forecast API with a mocked provider", () => {
     expect((await get(forecastRequest("delhi"))).status).toBe(502);
   });
 
+  it("rejects duplicate hours and suppresses upstream response text", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        Response.json({
+          ...fixture,
+          hourly: {
+            ...fixture.hourly,
+            time: fixture.hourly.time.map(() => "2026-01-03T01:00"),
+          },
+        }),
+      )
+      .mockResolvedValueOnce(new Response("Provider details", { status: 429 }));
+    const get = createForecastHandler(
+      createForecastService(fetcher, () => now),
+    );
+    expect((await get(forecastRequest("delhi"))).status).toBe(502);
+    const response = await get(forecastRequest("delhi"));
+    expect(response.status).toBe(503);
+    expect(await response.text()).not.toContain("Provider details");
+  });
+
   it("rejects a forecast completed after its date stops being tomorrow in IST", async () => {
     let time = new Date("2026-01-02T18:29:59Z");
     const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => {
@@ -125,7 +146,7 @@ describe("forecast API with a mocked provider", () => {
     expect((await get(forecastRequest("delhi"))).status).toBe(503);
     expect((await get(forecastRequest("delhi"))).status).toBe(502);
     expect(fetcher).toHaveBeenCalledTimes(2);
-    const nextUrl = new URL(String(fetcher.mock.calls[1][0]));
+    const nextUrl = new URL(String(fetcher.mock.calls[1]?.[0]));
     expect(nextUrl.searchParams.get("start_date")).toBe("2026-01-04");
   });
 });
@@ -146,7 +167,7 @@ describe("routine API with a mocked Gemini provider", () => {
     await handle(post(input));
     expect(fetcher).toHaveBeenCalledTimes(1);
 
-    const [url, init] = fetcher.mock.calls[0];
+    const [url, init] = fetcher.mock.calls[0] ?? [];
     expect(String(url)).toBe(
       "https://generativelanguage.googleapis.com/v1beta/interactions",
     );
@@ -174,6 +195,26 @@ describe("routine API with a mocked Gemini provider", () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
+  it("preserves pickup travel and treats an exercise walk as an outdoor activity", async () => {
+    const [exercise] = tasks;
+    const pickup = {
+      kind: "school_pickup",
+      time: "15:00",
+      duration: 25,
+      fixed: true,
+      travel: "car",
+    };
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        providerOutput({ tasks: [{ ...exercise, travel: "walk" }, pickup] }),
+      );
+    const extract = createRoutineExtractor(fetcher);
+    await expect(
+      extract("Walk for exercise, then drive to school pickup.", config),
+    ).resolves.toEqual([exercise, pickup]);
+  });
+
   it("retries a temporary provider 503 once within the same deadline and quota", async () => {
     const fetcher = vi
       .fn<typeof fetch>()
@@ -182,9 +223,9 @@ describe("routine API with a mocked Gemini provider", () => {
     const extract = createRoutineExtractor(fetcher);
     await expect(extract("Walk outdoors.", config)).resolves.toEqual(tasks);
     expect(fetcher).toHaveBeenCalledTimes(2);
-    expect(fetcher.mock.calls[0][1]?.signal).toBe(
-      fetcher.mock.calls[1][1]?.signal,
-    );
+    const firstSignal = fetcher.mock.calls[0]?.[1]?.signal;
+    expect(firstSignal).toBeInstanceOf(AbortSignal);
+    expect(firstSignal).toBe(fetcher.mock.calls[1]?.[1]?.signal);
 
     for (let i = 0; i < 3; i++) await extract(`Walk outside ${i}.`, config);
     await expect(extract("New walk routine.", config)).rejects.toMatchObject({
@@ -219,6 +260,58 @@ describe("routine API with a mocked Gemini provider", () => {
         .status,
     ).toBe(403);
     expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("requires matching schemes and accepts a normalized JSON media type", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockImplementation(async () => providerOutput({ tasks }));
+    const handle = createRoutineHandler(
+      createRoutineExtractor(fetcher),
+      () => config,
+    );
+    const routine = { routine: "Walk at 7 AM." };
+    const mixedScheme = await handle(
+      post(routine, { origin: "https://localhost" }),
+    );
+    expect(mixedScheme.status).toBe(403);
+    const crossSite = await handle(
+      post(routine, { "sec-fetch-site": "cross-site" }),
+    );
+    expect(crossSite.status).toBe(403);
+    const contentType = await handle(
+      post(routine, { "Content-Type": "text/plain" }),
+    );
+    expect(contentType.status).toBe(415);
+    expect(fetcher).not.toHaveBeenCalled();
+    const valid = await handle(
+      post(routine, {
+        origin: "http://localhost",
+        "Content-Type": "Application/JSON; charset=utf-8",
+      }),
+    );
+    expect(valid.status).toBe(200);
+    expect(valid.headers.get("Cache-Control")).toBe("no-store");
+    expect(valid.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("handles unreadable and empty provider messages without exposing them", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response("Unreadable provider response"))
+      .mockResolvedValueOnce(providerOutput({ tasks: [] }));
+    const handle = createRoutineHandler(
+      createRoutineExtractor(fetcher),
+      () => config,
+    );
+    const routine = { routine: "Walk at 7 AM." };
+    const unreadable = await handle(post(routine));
+    expect(unreadable.status).toBe(502);
+    expect(await unreadable.text()).not.toContain(
+      "Unreadable provider response",
+    );
+    expect((await handle(post(routine))).status).toBe(422);
   });
 
   it("rejects hallucinated fields and activities without returning provider text", async () => {

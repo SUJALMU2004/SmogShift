@@ -8,8 +8,9 @@ import {
 } from "../domain/routine";
 import type { Messages } from "../i18n/messages";
 
-type Outcome =
-  "ready" | "incomplete" | "unavailable" | "busy" | "empty" | "invalid";
+type Failure = "unavailable" | "busy" | "empty" | "invalid";
+type Outcome = "ready" | "incomplete" | Failure;
+type Submission = { tasks: TaskDraft[] } | { failure: Failure };
 export type ExtractionStatus = { kind: "success" | "error"; message: string };
 
 function feedback(
@@ -29,16 +30,37 @@ function feedback(
       return { kind: "error", message: text.aiInvalid };
     case "unavailable":
       return { kind: "error", message: text.aiUnavailable };
-    default:
+    case null:
       return null;
   }
 }
 
-function failure(status: number): Outcome {
+function failureFor(status: number): Failure {
   if (status === 429) return "busy";
   if (status === 422) return "empty";
   if (status === 400 || status === 413) return "invalid";
   return "unavailable";
+}
+
+async function submit(
+  routine: string,
+  signal: AbortSignal,
+): Promise<Submission> {
+  try {
+    const response = await fetch("/api/routine", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ routine }),
+      signal,
+    });
+    if (!response.ok) return { failure: failureFor(response.status) };
+    const parsed = extractionSchema.safeParse(await response.json());
+    if (!parsed.success) return { failure: "unavailable" };
+    if (!parsed.data.tasks.length) return { failure: "empty" };
+    return { tasks: parsed.data.tasks };
+  } catch {
+    return { failure: "unavailable" };
+  }
 }
 
 export function useRoutineExtraction(text: Messages) {
@@ -69,32 +91,16 @@ export function useRoutineExtraction(text: Messages) {
     const controller = new AbortController();
     active.current = controller;
     setExtracting(true);
-    try {
-      const response = await fetch("/api/routine", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(input.data),
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        if (!controller.signal.aborted) setOutcome(failure(response.status));
-        return;
-      }
-      const result = extractionSchema.parse(await response.json());
-      if (controller.signal.aborted) return;
-      if (!result.tasks.length) {
-        setOutcome("empty");
-        return;
-      }
-      setOutcome(onTasks(result.tasks) ? "ready" : "incomplete");
-    } catch {
-      if (!controller.signal.aborted) setOutcome("unavailable");
-    } finally {
-      if (active.current === controller) {
-        active.current = null;
-        if (!controller.signal.aborted) setExtracting(false);
-      }
+    const result = await submit(input.data.routine, controller.signal);
+    if (controller.signal.aborted) return;
+
+    active.current = null;
+    setExtracting(false);
+    if ("failure" in result) {
+      setOutcome(result.failure);
+      return;
     }
+    setOutcome(onTasks(result.tasks) ? "ready" : "incomplete");
   }
 
   return {

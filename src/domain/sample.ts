@@ -1,4 +1,4 @@
-import type { AirHour, CityId, Forecast } from "./air";
+import type { AirHour, CityId, SampleForecast } from "./air";
 
 // Fictional demo: the 10:00 window is below 151 but above 100.
 const sampleAqi = [
@@ -6,7 +6,7 @@ const sampleAqi = [
   148, 163, 177, 194, 207, 217, 223, 217, 210,
 ];
 
-export function sampleForecast(city: CityId): Forecast {
+export function sampleForecast(city: CityId): SampleForecast {
   const hours: AirHour[] = sampleAqi.map((aqi, hour) => ({
     hour,
     aqi,

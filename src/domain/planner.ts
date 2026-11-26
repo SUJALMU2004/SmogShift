@@ -1,14 +1,17 @@
 import type { Forecast } from "./air";
 import {
-  explicitWindow,
+  findAlternative,
+  peakInWindow,
+  type HourlyAqi,
+} from "./outdoor-window";
+import {
   isFixed,
   isOutdoor,
   isRequired,
-  minutesToTime,
-  timeToMinutes,
   type Preferences,
   type Task,
 } from "./routine";
+import { activitySlot, minutesToTime, type Slot } from "./slots";
 
 type Reason =
   | {
@@ -39,8 +42,6 @@ export type Decision = {
   sourcesRemoved: number;
 };
 
-type Slot = { start: number; end: number };
-
 function unchanged(original: Task, reason: Reason): Decision {
   return {
     original,
@@ -53,116 +54,19 @@ function unchanged(original: Task, reason: Reason): Decision {
   };
 }
 
-function peakInWindow(
-  aqiByHour: ReadonlyMap<number, number | null>,
-  start: number,
-  duration: number,
-) {
-  let peak = 0;
-  for (
-    let hour = Math.floor(start / 60);
-    hour <= Math.floor((start + duration - 1) / 60);
-    hour++
-  ) {
-    const value = aqiByHour.get(hour);
-    if (value == null || !Number.isFinite(value) || value < 0) return null;
-    peak = Math.max(peak, Math.round(value));
-  }
-  return peak;
+function planningCutoff(task: Task, preferences: Preferences): number {
+  if (task.sensitivity === "sensitive") return 101;
+  if (task.sensitivity === "general") return 151;
+  return preferences.sensitive ? 101 : 151;
 }
 
-function findAlternative(
+function outdoorFallback(
   task: Task,
-  occupied: ReadonlyMap<string, Slot>,
-  aqiByHour: ReadonlyMap<number, number | null>,
-  cutoff: number,
-) {
-  const original = timeToMinutes(task.time);
-  const window =
-    task.earliestStart || task.latestEnd
-      ? explicitWindow(task)
-      : {
-          start: Math.max(360, original - 240),
-          end: Math.min(1260, original + 240 + task.duration),
-        };
-  const latest = window.end - task.duration;
-  const otherSlots = [...occupied]
-    .filter(([id]) => id !== task.id)
-    .map(([, slot]) => slot);
-  const starts = new Set([window.start, latest, original]);
-  for (const slot of otherSlots) {
-    starts.add(slot.start - task.duration);
-    starts.add(slot.end);
-  }
-  // The covered hours change when the first or last minute crosses an hour.
-  // Check both sides so the nearest eligible start can be at either edge.
-  for (let boundary = 60; boundary < 1440; boundary += 60) {
-    starts.add(boundary - 1);
-    starts.add(boundary);
-    starts.add(boundary - task.duration);
-    starts.add(boundary - task.duration + 1);
-  }
-
-  let best: { start: number; peak: number; shift: number } | undefined;
-  for (const start of starts) {
-    if (
-      start < window.start ||
-      start > latest ||
-      otherSlots.some(
-        (slot) => start < slot.end && start + task.duration > slot.start,
-      )
-    )
-      continue;
-    const peak = peakInWindow(aqiByHour, start, task.duration);
-    if (peak === null || peak >= cutoff) continue;
-    const shift = Math.abs(start - original);
-    if (
-      !best ||
-      peak < best.peak ||
-      (peak === best.peak &&
-        (shift < best.shift || (shift === best.shift && start < best.start)))
-    ) {
-      best = { start, peak, shift };
-    }
-  }
-  return best;
-}
-
-function outdoorDecision(
-  task: Task,
-  aqiByHour: ReadonlyMap<number, number | null>,
   occupied: Map<string, Slot>,
-  preferences: Preferences,
+  peak: number,
+  cutoff: number,
 ): Decision {
-  const sensitive =
-    task.sensitivity === "sensitive" ||
-    (task.sensitivity !== "general" && preferences.sensitive);
-  // Cutoffs use the US AQI bands consumed by the forecast adapter.
-  const cutoff = sensitive ? 101 : 151;
-  const peak = peakInWindow(aqiByHour, timeToMinutes(task.time), task.duration);
-
-  if (peak === null) return unchanged(task, { code: "unknown" });
-  if (peak < cutoff) return unchanged(task, { code: "below", peak, cutoff });
   const fixed = isFixed(task);
-  const alternative = fixed
-    ? undefined
-    : findAlternative(task, occupied, aqiByHour, cutoff);
-  if (alternative) {
-    occupied.set(task.id, {
-      start: alternative.start,
-      end: alternative.start + task.duration,
-    });
-    return {
-      ...unchanged(task, {
-        code: "move",
-        peak,
-        newPeak: alternative.peak,
-        cutoff,
-      }),
-      kind: "moved",
-      time: minutesToTime(alternative.start),
-    };
-  }
   if (task.kind === "outdoor_exercise" && task.indoorAvailable) {
     return {
       ...unchanged(task, {
@@ -190,6 +94,39 @@ function outdoorDecision(
   };
 }
 
+function outdoorDecision(
+  task: Task,
+  aqiByHour: HourlyAqi,
+  occupied: Map<string, Slot>,
+  preferences: Preferences,
+): Decision {
+  const cutoff = planningCutoff(task, preferences);
+  const peak = peakInWindow(aqiByHour, activitySlot(task));
+  if (peak === null) return unchanged(task, { code: "unknown" });
+  if (peak < cutoff) return unchanged(task, { code: "below", peak, cutoff });
+
+  const alternative = isFixed(task)
+    ? undefined
+    : findAlternative(task, occupied, aqiByHour, cutoff);
+  if (!alternative) return outdoorFallback(task, occupied, peak, cutoff);
+
+  const time = minutesToTime(alternative.start);
+  occupied.set(task.id, {
+    start: alternative.start,
+    end: alternative.start + task.duration,
+  });
+  return {
+    ...unchanged(task, {
+      code: "move",
+      peak,
+      newPeak: alternative.peak,
+      cutoff,
+    }),
+    kind: "moved",
+    time,
+  };
+}
+
 function indoorDecision(task: Task, occupied: Map<string, Slot>): Decision {
   const incense = task.kind === "burn_incense";
   if (incense && isFixed(task)) return unchanged(task, { code: "fixed" });
@@ -214,10 +151,7 @@ export function buildPlan(
   );
   const timeline = [...tasks].sort((a, b) => a.time.localeCompare(b.time));
   const occupied = new Map(
-    timeline.map((task) => {
-      const start = timeToMinutes(task.time);
-      return [task.id, { start, end: start + task.duration }];
-    }),
+    timeline.map((task) => [task.id, activitySlot(task)]),
   );
   const carpoolPickup = preferences.carpool
     ? timeline.find(

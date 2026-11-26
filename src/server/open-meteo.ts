@@ -4,7 +4,7 @@ import {
   tomorrowInKolkata,
   type AirHour,
   type CityId,
-  type Forecast,
+  type RegionalForecast,
 } from "../domain/air";
 import { HttpError } from "./http";
 
@@ -27,13 +27,14 @@ const payloadSchema = z.object({
     ozone: readings,
   }),
 });
-const cacheDuration = 15 * 60_000;
+const timeoutMs = 6500;
 
+/** Map raw CAMS readings to validated, ordered forecast hours. */
 export function normalizeForecast(
   payload: unknown,
   city: CityId,
   now: Date,
-): Forecast {
+): RegionalForecast {
   const parsed = payloadSchema.safeParse(payload);
   if (!parsed.success)
     throw new HttpError(502, "The forecast provider returned unreadable data.");
@@ -81,77 +82,43 @@ export function normalizeForecast(
   };
 }
 
-export function createForecastService(
-  fetcher: typeof fetch = fetch,
-  clock = () => new Date(),
-) {
-  const cache = new Map<CityId, { forecast: Forecast; expires: number }>();
-  const pending = new Map<string, Promise<Forecast>>();
+export async function fetchOpenMeteoForecast(
+  city: CityId,
+  now: Date,
+  fetcher: typeof fetch,
+): Promise<RegionalForecast> {
+  const { latitude, longitude } = cities[city];
+  const url = new URL("https://air-quality-api.open-meteo.com/v1/air-quality");
+  const date = tomorrowInKolkata(now);
+  url.search = new URLSearchParams({
+    latitude: String(latitude),
+    longitude: String(longitude),
+    domains: "cams_global",
+    hourly: fields.join(","),
+    timezone: "Asia/Kolkata",
+    start_date: date,
+    end_date: date,
+  }).toString();
 
-  async function fetchForecast(city: CityId, now: Date) {
-    const { latitude, longitude } = cities[city];
-    const url = new URL(
-      "https://air-quality-api.open-meteo.com/v1/air-quality",
+  let response: Response;
+  try {
+    response = await fetcher(url, {
+      cache: "no-store",
+      redirect: "error",
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch {
+    throw new HttpError(
+      503,
+      "The forecast provider could not be reached. Try again or load the sample.",
     );
-    const date = tomorrowInKolkata(now);
-    url.search = new URLSearchParams({
-      latitude: String(latitude),
-      longitude: String(longitude),
-      domains: "cams_global",
-      hourly: fields.join(","),
-      timezone: "Asia/Kolkata",
-      start_date: date,
-      end_date: date,
-    }).toString();
-
-    let response: Response;
-    try {
-      response = await fetcher(url, {
-        cache: "no-store",
-        signal: AbortSignal.timeout(6500),
-      });
-    } catch {
-      throw new HttpError(
-        503,
-        "The forecast provider could not be reached. Try again or load the sample.",
-      );
-    }
-    if (!response.ok)
-      throw new HttpError(
-        503,
-        "The forecast provider is unavailable. Try again or load the sample.",
-      );
-
-    const forecast = normalizeForecast(
-      await response.json().catch(() => null),
-      city,
-      now,
-    );
-    if (tomorrowInKolkata(clock()) !== forecast.date)
-      throw new HttpError(
-        503,
-        "The forecast day changed. Refresh and try again.",
-      );
-    cache.set(city, { forecast, expires: now.getTime() + cacheDuration });
-    return forecast;
   }
+  if (!response.ok)
+    throw new HttpError(
+      503,
+      "The forecast provider is unavailable. Try again or load the sample.",
+    );
 
-  return async (city: CityId): Promise<Forecast> => {
-    const now = clock();
-    const date = tomorrowInKolkata(now);
-    const cached = cache.get(city);
-    if (
-      cached &&
-      cached.expires > now.getTime() &&
-      cached.forecast.date === date
-    )
-      return cached.forecast;
-
-    const key = `${city}:${date}`;
-    const active = pending.get(key);
-    if (active) return active;
-    const loading = fetchForecast(city, now).finally(() => pending.delete(key));
-    pending.set(key, loading);
-    return loading;
-  };
+  const payload: unknown = await response.json().catch(() => null);
+  return normalizeForecast(payload, city, now);
 }

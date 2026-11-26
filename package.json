@@ -4,6 +4,7 @@
   "description": "An air-aware daily planner for Delhi-NCR households.",
   "scripts": {
     "test": "vitest run tests/unit",
+    "test:coverage": "vitest run tests/unit --coverage",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
@@ -13,7 +14,7 @@
     "test:gemini": "node --env-file-if-exists=.env.local node_modules/vitest/vitest.mjs run tests/live",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "verify": "npm run lint && npm run typecheck && npm run format:check && npm test && npm run build && npm run test:e2e"
+    "verify": "npm run lint && npm run typecheck && npm run format:check && npm run test:coverage && npm run build && npm run test:e2e"
   },
   "repository": {
     "type": "git",
@@ -32,6 +33,7 @@
     "@types/node": "^26.6.10",
     "@types/react": "^19.3.1",
     "@types/react-dom": "^19.3.0",
+    "@vitest/coverage-v8": "5.1.1",
     "eslint": "^9.39.5",
     "eslint-config-next": "^16.4.6",
     "prettier": "^3.10.1",

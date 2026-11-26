@@ -2,10 +2,20 @@ import { z } from "zod";
 import { formatLocales, messages, type Locale } from "../i18n/messages";
 import type { Forecast } from "./air";
 import type { Decision } from "./planner";
-import { timeSchema } from "./routine";
+import { timeSchema } from "./slots";
 
 export type PickupProposal = { message: string; whatsappUrl: string };
 const planDateSchema = z.iso.date();
+
+function canSharePickup({ kind, time, original }: Decision): boolean {
+  return (
+    kind === "carpool" &&
+    original.kind === "school_pickup" &&
+    original.travel === "car" &&
+    time === original.time &&
+    timeSchema.safeParse(time).success
+  );
+}
 
 /** Derive a shareable invitation from the current carpool decision and its plan date. */
 export function buildPickupProposal(
@@ -13,20 +23,11 @@ export function buildPickupProposal(
   forecast: Pick<Forecast, "source" | "date"> | null,
   locale: Locale,
 ): PickupProposal | null {
-  if (
-    decision.kind !== "carpool" ||
-    decision.original.kind !== "school_pickup" ||
-    decision.original.travel !== "car" ||
-    !decision.time ||
-    !timeSchema.safeParse(decision.time).success ||
-    decision.time !== decision.original.time
-  ) {
-    return null;
-  }
+  if (!canSharePickup(decision)) return null;
 
   const text = messages[locale].share;
   const date = planDateSchema.safeParse(forecast?.date);
-  const time = decision.time;
+  const { time } = decision.original;
   let message: string;
   if (forecast?.source === "sample") {
     message = text.demoMessage(time);

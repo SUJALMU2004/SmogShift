@@ -225,6 +225,7 @@ test("keeps the newest region when the previous request is still pending", async
       json: {
         ...sampleForecast("gurugram"),
         date: "2026-01-03",
+        fetchedAt: "2026-01-02T10:00:00Z",
         source: "open-meteo",
       },
     }),
@@ -247,6 +248,91 @@ test("keeps the newest region when the previous request is still pending", async
   } finally {
     finishDelhi();
   }
+});
+
+test("keeps the reset sample when a canceled extraction completes later", async ({
+  page,
+}) => {
+  let started!: () => void;
+  let finish!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const release = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  await page.route("**/api/routine", async (route) => {
+    started();
+    await release;
+    await route
+      .fulfill({
+        json: {
+          tasks: [
+            {
+              kind: "outdoor_errand",
+              time: "12:00",
+              duration: 10,
+              fixed: false,
+              travel: "unspecified",
+            },
+          ],
+        },
+      })
+      .catch(() => undefined);
+  });
+  try {
+    await page.goto("/");
+    await page
+      .getByText("Extract activities with Gemini", { exact: true })
+      .click();
+    await page
+      .getByLabel("Describe your day")
+      .fill("Take a 10-minute outdoor errand at noon.");
+    await page.getByRole("button", { name: "Extract with Gemini" }).click();
+    await pending;
+    const canceled = page.waitForEvent("requestfailed", {
+      predicate: (request) => request.url().endsWith("/api/routine"),
+    });
+    await page
+      .getByRole("button", { name: "Load example routine", exact: true })
+      .click();
+    await canceled;
+    finish();
+    const first = page.getByRole("group", { name: "Activity 1", exact: true });
+    await expect(
+      first.getByRole("combobox", { name: "Activity type" }),
+    ).toHaveValue("outdoor_exercise");
+    await expect(
+      page.getByRole("button", { name: "Extract with Gemini" }),
+    ).toBeEnabled();
+  } finally {
+    finish();
+  }
+});
+
+test("offers the sample when a successful forecast response contains malformed readings", async ({
+  page,
+}) => {
+  await page.clock.setFixedTime(new Date("2026-01-02T10:00:00Z"));
+  await page.route("**/api/forecast?city=delhi", (route) =>
+    route.fulfill({
+      json: {
+        city: "delhi",
+        source: "open-meteo",
+        date: "2026-01-03",
+        fetchedAt: "2026-01-02T10:00:00Z",
+        hours: null,
+      },
+    }),
+  );
+  await page.goto("/");
+  await page.getByRole("button", { name: "Regional forecast" }).click();
+  const panel = page.getByRole("region", { name: "Tomorrow’s forecast" });
+  await expect(panel.getByRole("status")).toHaveText("Forecast unavailable.");
+  await panel.getByRole("button", { name: "Use sample forecast" }).click();
+  await expect(
+    page.getByText("Fictional readings for the demo.", { exact: true }),
+  ).toBeVisible();
 });
 
 test("has keyboard navigation and no detected WCAG AA violations at mobile width", async ({

@@ -93,7 +93,7 @@ describe("planning decisions", () => {
       time: "11:00",
       outdoorMinutesAvoided: 0,
     });
-    expect(result.decisions[0].reason).toEqual({
+    expect(result.decisions[0]?.reason).toEqual({
       code: "move",
       peak: 220,
       newPeak: 80,
@@ -165,10 +165,10 @@ describe("planning decisions", () => {
 
   it("uses the sensitive household threshold and preserves fixed outdoor times", () => {
     const forecast = outlook({ 7: 140, 8: 140 });
-    expect(buildPlan([walk], forecast, normal).decisions[0].kind).toBe("kept");
+    expect(buildPlan([walk], forecast, normal).decisions[0]?.kind).toBe("kept");
     expect(
       buildPlan([walk], forecast, { ...normal, sensitive: true }).decisions[0]
-        .kind,
+        ?.kind,
     ).toBe("indoors");
     expect(
       buildPlan([{ ...walk, fixed: true, indoorAvailable: false }], forecast, {
@@ -190,7 +190,7 @@ describe("planning decisions", () => {
 
   it("preserves an outdoor activity when the forecast coverage is missing", () => {
     const result = buildPlan([walk], outlook({ 7: 300 }), normal);
-    expect(result.decisions[0].reason).toEqual({ code: "unknown" });
+    expect(result.decisions[0]?.reason).toEqual({ code: "unknown" });
     expect(result.impact.outdoorMinutesAvoided).toBe(0);
   });
 
@@ -211,17 +211,14 @@ describe("planning decisions", () => {
       travel: "car",
       fixed: true,
     };
-    const tasks = [
-      pickup,
-      { ...pickup, id: "second" },
-      { ...pickup, id: "bus", travel: "transit" },
-    ] as Task[];
+    const bus: Task = { ...pickup, id: "bus", travel: "transit" };
+    const tasks = [pickup, { ...pickup, id: "second" }, bus];
     expect(
       buildPlan(tasks, null, { ...normal, carpool: true }).impact
         .conditionalRoundTrips,
     ).toBe(1);
     expect(
-      buildPlan([tasks[2]], null, { ...normal, carpool: true }).impact
+      buildPlan([bus], null, { ...normal, carpool: true }).impact
         .conditionalRoundTrips,
     ).toBe(0);
   });
@@ -297,14 +294,14 @@ describe("planning decisions", () => {
       buildPlan([{ ...activity, sensitivity: "general" }], forecast, {
         ...normal,
         sensitive: true,
-      }).decisions[0].kind,
+      }).decisions[0]?.kind,
     ).toBe("moved");
     expect(
       buildPlan(
         [{ ...activity, sensitivity: "sensitive", indoorAvailable: false }],
         forecast,
         normal,
-      ).decisions[0].kind,
+      ).decisions[0]?.kind,
     ).toBe("deferred");
   });
 

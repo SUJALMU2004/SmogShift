@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
-import { createRoutineExtractor, defaultModel } from "../../src/server/gemini";
+import { defaultModel } from "../../src/server/gemini";
+import { createRoutineExtractor } from "../../src/server/routine-service";
 import { multilingualRoutines } from "../fixtures/routines";
 
 const key = process.env.GEMINI_API_KEY?.trim();

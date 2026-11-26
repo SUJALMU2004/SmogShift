@@ -1,19 +1,14 @@
 import { isCity } from "../domain/air";
-import { errorResponse, HttpError } from "./http";
-import { createForecastService } from "./open-meteo";
+import { createForecastService } from "./forecast-service";
+import { errorResponse, jsonResponse } from "./http";
 
 export function createForecastHandler(getForecast = createForecastService()) {
   return async function GET(request: Request) {
     const city = new URL(request.url).searchParams.get("city");
     if (!isCity(city))
-      return errorResponse(
-        new HttpError(400, "Choose Delhi, Noida or Gurugram."),
-        "",
-      );
+      return jsonResponse({ error: "Choose Delhi, Noida or Gurugram." }, 400);
     try {
-      return Response.json(await getForecast(city), {
-        headers: { "Cache-Control": "no-store" },
-      });
+      return jsonResponse(await getForecast(city));
     } catch (error) {
       return errorResponse(
         error,
